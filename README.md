@@ -19,9 +19,13 @@
 │   ├── app/
 │   │   ├── ai.py
 │   │   └── main.py
-│   └── requirements.txt
+│   ├── tests/
+│   │   └── test_main.py
+│   ├── requirements.txt
+│   └── requirements-dev.txt
 ├── frontend/
 │   └── index.html
+├── pytest.ini
 ├── .env.example
 ├── .gitignore
 └── PRD.md
@@ -44,8 +48,10 @@ PowerShell에서 저장소 루트 기준으로 실행합니다.
 ```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
+python -m pip install -r backend\requirements-dev.txt
 ```
+
+`requirements-dev.txt`에는 백엔드 의존성과 테스트용 `pytest`, `httpx2`가 포함됩니다. 런타임 의존성만 설치하려면 `backend\requirements.txt`를 사용하세요.
 
 `.env.example`을 참고해 루트에 `.env`를 만들고, 실제 키가 있을 때만 `GEMINI_API_KEY` 값을 설정하세요. 기존 `.env`가 있다면 덮어쓰지 마세요. `.env`는 Git에서 제외됩니다.
 
@@ -79,10 +85,16 @@ python -m http.server 5500 --directory frontend
 
 ## 검증
 
-현재 자동화 테스트나 린터는 추가하지 않았습니다. Python 구문 확인은 다음과 같이 실행할 수 있습니다.
+테스트 실행:
+
+```powershell
+python -m pytest
+```
+
+현재 `/health` 응답 테스트가 포함되어 있습니다. Python 구문 확인은 다음과 같이 실행할 수 있습니다.
 
 ```powershell
 python -m compileall backend
 ```
 
-기능을 추가할 때에는 PRD의 완료 조건과 예외 처리 기준을 테스트로 검증하고, 실행한 명령과 결과를 변경 요약에 기록하세요.
+린터는 아직 설정되어 있지 않습니다. 기능을 추가할 때에는 PRD의 완료 조건과 예외 처리 기준을 테스트로 검증하고, 실행한 명령과 결과를 변경 요약에 기록하세요.

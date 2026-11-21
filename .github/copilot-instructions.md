@@ -12,11 +12,14 @@
 - `backend/app/main.py`: FastAPI 앱 및 `/health`
 - `backend/app/ai.py`: Gemini 클라이언트 생성 경계
 - `backend/requirements.txt`: Python 의존성
+- `backend/requirements-dev.txt`: 개발·테스트 의존성
+- `backend/tests/`: 백엔드 테스트
+- 루트 `pytest.ini`: pytest 테스트 검색 경로
 - 루트 `.env.example`: 필요한 환경변수 이름만 제공. 실제 키는 `.env`에만 저장한다.
-- 개발 환경은 Python 3.10 이상과 PowerShell을 기준으로 한다. 설치는 `py -3 -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, `python -m pip install -r backend\requirements.txt` 순서다.
+- 개발 환경은 Python 3.10 이상과 PowerShell을 기준으로 한다. 설치는 `py -3 -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, `python -m pip install -r backend\requirements-dev.txt` 순서다. 런타임 의존성만 필요하면 `backend\requirements.txt`를 사용한다.
 - API 실행: `python -m uvicorn backend.app.main:app --reload`; 상태 확인: `Invoke-RestMethod http://127.0.0.1:8000/health`.
 - 프론트엔드 확인: `python -m http.server 5500 --directory frontend` 후 `http://127.0.0.1:5500`을 연다. 프론트엔드는 현재 API와 연결되어 있지 않다.
-- 변경 후 최소 `python -m compileall backend`를 실행한다. 테스트와 린터는 아직 설정되어 있지 않으므로, 기능을 추가할 때 범위에 맞는 자동화 테스트를 함께 구성하고 실행 결과를 보고한다.
+- 변경 후 `python -m pytest`와 최소 `python -m compileall backend`를 실행한다. 린터는 아직 설정되어 있지 않다. 기능을 추가할 때 범위에 맞는 자동화 테스트를 함께 구성하고 실행 결과를 보고한다.
 
 ## 구현 원칙
 
