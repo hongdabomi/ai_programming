@@ -1,15 +1,15 @@
 ---
 name: git-commit
-description: Reviews the current Git changes, runs relevant checks, and creates a focused commit. Use when the user explicitly asks to commit changes or invokes this skill.
+description: "현재 Git 변경 사항을 검토하고 관련 검증을 실행한 뒤 범위를 명확히 한 커밋을 생성합니다. 사용자가 커밋을 명시적으로 요청하거나 이 Skill을 호출했을 때 사용합니다."
 ---
 
-# Git commit
+# Git 커밋
 
-1. Confirm the user explicitly requested a commit. Do not infer commit approval from a request to edit files, review changes, or prepare a commit message.
-2. Inspect `git status --short --branch` and the complete diff, including untracked files that are in scope. Never discard or overwrite user changes.
-3. Check for secrets, generated files, unrelated edits, and accidental personal data. Stop and report anything sensitive or ambiguous; do not stage it.
-4. Run the smallest relevant tests or validation commands and report failures. Do not claim checks passed if they were not run.
-5. Stage only the reviewed, intended paths by name. Review the staged diff and status again before committing.
-6. Write a concise imperative commit message, preferably using the Conventional Commits form (`type(scope): summary`) when it fits.
-7. Create the commit only after the above checks. Do not push or create a Pull Request as part of this skill.
-8. Report the commit hash, message, included paths, and validation results. If a safe, scoped commit cannot be made, stop and explain why.
+1. 사용자가 커밋을 명시적으로 요청했는지 확인한다. 파일 수정, 변경 검토, 커밋 메시지 준비 요청만으로 커밋 승인을 추정하지 않는다.
+2. `git status --short --branch`와 범위에 포함되는 미추적 파일을 포함한 전체 diff를 확인한다. 사용자의 변경 사항을 버리거나 덮어쓰지 않는다.
+3. 비밀정보, 생성 파일, 무관한 수정, 개인정보가 우발적으로 포함됐는지 확인한다. 민감하거나 모호한 내용이 있으면 중단하고 알리며 stage하지 않는다.
+4. 변경에 필요한 최소한의 테스트 또는 검증 명령을 실행하고 실패를 보고한다. 실행하지 않은 검증을 통과했다고 말하지 않는다.
+5. 검토가 끝난 대상 경로만 지정해 stage한다. 커밋 전에 staged diff와 상태를 다시 확인한다.
+6. 간결한 명령형 커밋 메시지를 한국어로 작성한다. Conventional Commits 형식(`type(scope): summary`)을 사용할 때 `feat`, `fix`, `chore` 등의 접두사는 영어로 유지하고 요약은 한국어로 작성한다.
+7. 위 검토와 검증을 마친 뒤에만 커밋한다. 이 Skill의 일부로 push하거나 Pull Request를 만들지 않는다.
+8. 커밋 해시, 메시지, 포함된 경로, 검증 결과를 보고한다. 범위를 안전하게 제한한 커밋을 만들 수 없다면 중단하고 이유를 설명한다.
