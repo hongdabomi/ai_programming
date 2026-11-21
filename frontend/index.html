@@ -130,6 +130,77 @@
         margin: 0.5rem 0 0;
       }
 
+      .menu-entry-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .form-field {
+        display: grid;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
+        font-weight: 600;
+      }
+
+      .form-field input[type="text"] {
+        min-height: 2.75rem;
+        padding: 0.5rem;
+        border: 1px solid #8a8066;
+        border-radius: 0.35rem;
+        font: inherit;
+        font-weight: 400;
+      }
+
+      .menu-list,
+      .result-list {
+        display: grid;
+        gap: 0.75rem;
+        padding: 0;
+        list-style: none;
+      }
+
+      .menu-item,
+      .result-item {
+        padding: 1rem;
+        border: 1px solid #ded8c4;
+        border-radius: 0.5rem;
+      }
+
+      .menu-item-header,
+      .result-item-header {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+
+      .result-status {
+        font-weight: 700;
+      }
+
+      .result-status.match {
+        color: #8a1c1c;
+      }
+
+      .result-status.check-needed {
+        color: #7a5200;
+      }
+
+      .result-status.not-identified {
+        color: #4a4a4a;
+      }
+
+      #analysis-status,
+      #analysis-disclaimer {
+        min-height: 1.5rem;
+        margin: 0.75rem 0 0;
+      }
+
+      #analysis-results {
+        margin-top: 1rem;
+      }
+
       .notice {
         margin-top: 1.25rem;
         padding: 1rem;
@@ -148,6 +219,11 @@
 
         .allergy-grid {
           grid-template-columns: 1fr;
+        }
+
+        .menu-entry-grid {
+          grid-template-columns: 1fr;
+          gap: 0;
         }
       }
     </style>
@@ -178,6 +254,53 @@
         </form>
       </section>
 
+      <section class="card" aria-labelledby="comparison-heading">
+        <h2 id="comparison-heading">급식 메뉴 알레르기 비교</h2>
+        <p class="help-text">
+          급식표에서 확인한 메뉴명과 알레르기 표시를 입력해 주세요.
+          비교에는 저장된 알레르기 정보가 사용됩니다.
+        </p>
+
+        <form id="menu-form">
+          <fieldset id="menu-entry-fieldset" disabled>
+            <legend>급식 메뉴 입력</legend>
+            <div class="menu-entry-grid">
+              <label class="form-field" for="menu-name">
+                메뉴명
+                <input id="menu-name" type="text" maxlength="160" required>
+              </label>
+              <label class="form-field" for="menu-allergens">
+                급식표의 알레르기 표시
+                <input
+                  id="menu-allergens"
+                  type="text"
+                  placeholder="예: 우유, 대두"
+                  aria-describedby="menu-allergens-help"
+                >
+              </label>
+            </div>
+            <p id="menu-allergens-help" class="help-text">
+              표시된 명칭을 쉼표로 구분해 입력하세요. 화면에 없는 표현은 추정하지 않고 확인이 필요한 항목으로 안내합니다.
+            </p>
+            <label class="allergy-option">
+              <input id="menu-information-complete" type="checkbox">
+              급식표의 알레르기 표시를 모두 확인했습니다.
+            </label>
+          </fieldset>
+          <div class="actions">
+            <button id="add-menu-button" type="submit" disabled>메뉴 추가</button>
+            <button id="analyze-button" type="button" disabled>비교하기</button>
+          </div>
+        </form>
+
+        <ul id="menu-list" class="menu-list" aria-label="비교할 메뉴 목록"></ul>
+        <p id="analysis-status" role="status" aria-live="polite">
+          알레르기 정보를 불러오는 중입니다.
+        </p>
+        <div id="analysis-results" aria-live="polite"></div>
+        <p id="analysis-disclaimer" class="notice" hidden></p>
+      </section>
+
       <aside class="notice">
         <strong>확인 안내</strong>
         <p>이 서비스는 입력된 정보를 정리해 보여줄 뿐, 음식의 안전성을 판정하거나 보장하지 않습니다. 실제 원재료와 조리 과정은 교육기관 담당자에게 확인해 주세요.</p>
@@ -193,11 +316,27 @@
       const retryButton = document.querySelector("#retry-button");
       const selectionSummary = document.querySelector("#selection-summary");
       const saveStatus = document.querySelector("#save-status");
+      const menuForm = document.querySelector("#menu-form");
+      const menuEntryFieldset = document.querySelector("#menu-entry-fieldset");
+      const menuNameInput = document.querySelector("#menu-name");
+      const menuAllergensInput = document.querySelector("#menu-allergens");
+      const menuInformationComplete = document.querySelector(
+        "#menu-information-complete",
+      );
+      const addMenuButton = document.querySelector("#add-menu-button");
+      const analyzeButton = document.querySelector("#analyze-button");
+      const menuList = document.querySelector("#menu-list");
+      const analysisStatus = document.querySelector("#analysis-status");
+      const analysisResults = document.querySelector("#analysis-results");
+      const analysisDisclaimer = document.querySelector("#analysis-disclaimer");
 
       let allergyOptions = [];
       let savedAllergies = [];
+      let menuItems = [];
+      let nextMenuId = 1;
       let isLoaded = false;
       let isSaving = false;
+      let isAnalyzing = false;
 
       function getSelectedAllergies() {
         return Array.from(
@@ -219,7 +358,11 @@
           checkbox.name = "allergies";
           checkbox.value = allergy;
           checkbox.checked = selected.has(allergy);
-          checkbox.addEventListener("change", () => updateFormState());
+          checkbox.addEventListener("change", () => {
+            updateFormState();
+            analysisResults.replaceChildren();
+            analysisDisclaimer.hidden = true;
+          });
 
           const text = document.createElement("span");
           text.textContent = allergy === "난류(가금류)"
@@ -252,6 +395,145 @@
         }
 
         saveButton.disabled = !isLoaded || isSaving || !hasUnsavedChanges;
+        if (hasUnsavedChanges) {
+          analysisStatus.textContent =
+            "알레르기 정보에 저장되지 않은 변경 사항이 있습니다. 저장 후 비교할 수 있습니다.";
+        } else if (
+          analysisStatus.textContent.includes("저장되지 않은 변경 사항")
+        ) {
+          analysisStatus.textContent = savedAllergies.length
+            ? "저장된 알레르기 정보를 사용할 수 있습니다."
+            : "비교하려면 먼저 알레르기 정보를 등록해 주세요.";
+        }
+        updateAnalysisControls();
+      }
+
+      function updateAnalysisControls() {
+        const currentAllergies = getSelectedAllergies();
+        const hasUnsavedAllergyChanges =
+          currentAllergies.length !== savedAllergies.length ||
+          currentAllergies.some(
+            (allergy, index) => allergy !== savedAllergies[index],
+          );
+        addMenuButton.disabled =
+          !isLoaded || isAnalyzing || !menuNameInput.value.trim();
+        analyzeButton.disabled =
+          !isLoaded ||
+          isAnalyzing ||
+          savedAllergies.length === 0 ||
+          hasUnsavedAllergyChanges ||
+          menuItems.length === 0;
+        menuEntryFieldset.disabled = !isLoaded || isAnalyzing;
+      }
+
+      function renderMenuItems() {
+        menuList.replaceChildren();
+
+        for (const menu of menuItems) {
+          const item = document.createElement("li");
+          item.className = "menu-item";
+
+          const header = document.createElement("div");
+          header.className = "menu-item-header";
+          const name = document.createElement("strong");
+          name.textContent = menu.name;
+          const removeButton = document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "secondary";
+          removeButton.textContent = "삭제";
+          removeButton.setAttribute("aria-label", `${menu.name} 메뉴 삭제`);
+          removeButton.addEventListener("click", () => {
+            menuItems = menuItems.filter((item) => item.id !== menu.id);
+            renderMenuItems();
+            analysisResults.replaceChildren();
+            analysisDisclaimer.hidden = true;
+            updateAnalysisControls();
+          });
+          header.append(name, removeButton);
+
+          const details = document.createElement("p");
+          const allergenText = menu.allergens.length
+            ? menu.allergens.join(", ")
+            : "입력된 표시 없음";
+          details.textContent =
+            `알레르기 표시: ${allergenText} · ` +
+            (menu.isInformationComplete ? "확인 완료" : "추가 확인 필요");
+          item.append(header, details);
+          menuList.append(item);
+        }
+
+        updateAnalysisControls();
+      }
+
+      function renderAnalysisResults(payload) {
+        const validStatuses = new Set([
+          "MATCH",
+          "CHECK_NEEDED",
+          "NOT_IDENTIFIED",
+        ]);
+        if (
+          !Array.isArray(payload.results) ||
+          payload.results.some(
+            (result) =>
+              !result ||
+              typeof result !== "object" ||
+              typeof result.menu_id !== "string" ||
+              typeof result.menu_name !== "string" ||
+              !validStatuses.has(result.status) ||
+              !Array.isArray(result.matched_allergens) ||
+              !Array.isArray(result.evidence) ||
+              result.matched_allergens.some((item) => typeof item !== "string") ||
+              result.evidence.some((item) => typeof item !== "string") ||
+              typeof result.reason !== "string",
+          ) ||
+          typeof payload.disclaimer !== "string"
+        ) {
+          throw new Error("비교 결과 형식이 올바르지 않습니다.");
+        }
+
+        analysisResults.replaceChildren();
+        const list = document.createElement("ul");
+        list.className = "result-list";
+        const statusLabels = {
+          MATCH: "일치 항목 확인",
+          CHECK_NEEDED: "추가 확인 필요",
+          NOT_IDENTIFIED: "일치 표시 미확인",
+        };
+        const statusClasses = {
+          MATCH: "match",
+          CHECK_NEEDED: "check-needed",
+          NOT_IDENTIFIED: "not-identified",
+        };
+
+        for (const result of payload.results) {
+          const item = document.createElement("li");
+          item.className = "result-item";
+          const header = document.createElement("div");
+          header.className = "result-item-header";
+          const name = document.createElement("strong");
+          name.textContent = result.menu_name || "이름 없는 메뉴";
+          const status = document.createElement("span");
+          status.className = `result-status ${statusClasses[result.status]}`;
+          status.textContent = statusLabels[result.status];
+          header.append(name, status);
+
+          const matches = document.createElement("p");
+          matches.textContent = result.matched_allergens.length
+            ? `일치 항목: ${result.matched_allergens.join(", ")}`
+            : "일치 항목: 없음";
+          const evidence = document.createElement("p");
+          evidence.textContent = result.evidence.length
+            ? `확인한 표시: ${result.evidence.join(", ")}`
+            : "확인한 표시: 없음";
+          const reason = document.createElement("p");
+          reason.textContent = result.reason;
+          item.append(header, matches, evidence, reason);
+          list.append(item);
+        }
+
+        analysisResults.append(list);
+        analysisDisclaimer.textContent = payload.disclaimer;
+        analysisDisclaimer.hidden = false;
       }
 
       async function requestJson(path, options) {
@@ -299,6 +581,7 @@
         saveButton.disabled = true;
         retryButton.hidden = true;
         saveStatus.textContent = "저장된 정보를 불러오는 중입니다.";
+        updateAnalysisControls();
 
         try {
           const [allergens, profile] = await Promise.all([
@@ -323,8 +606,14 @@
           fieldset.disabled = false;
           isLoaded = true;
           updateFormState();
+          analysisStatus.textContent = savedAllergies.length
+            ? "저장된 알레르기 정보를 사용할 수 있습니다."
+            : "비교하려면 먼저 알레르기 정보를 등록해 주세요.";
         } catch (error) {
           showLoadError(error);
+          analysisStatus.textContent =
+            "알레르기 정보를 불러오지 못해 비교할 수 없습니다.";
+          updateAnalysisControls();
         }
       }
 
@@ -367,6 +656,76 @@
           isSaving = false;
           fieldset.disabled = !isLoaded;
           updateFormState(resultMessage);
+        }
+      });
+
+      menuNameInput.addEventListener("input", updateAnalysisControls);
+
+      menuForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = menuNameInput.value.trim();
+        if (!isLoaded || !name || isAnalyzing) {
+          return;
+        }
+
+        menuItems.push({
+          id: `menu-${nextMenuId++}`,
+          name,
+          allergens: menuAllergensInput.value
+            .split(",")
+            .map((allergen) => allergen.trim())
+            .filter(Boolean),
+          isInformationComplete: menuInformationComplete.checked,
+        });
+        menuForm.reset();
+        renderMenuItems();
+        analysisResults.replaceChildren();
+        analysisDisclaimer.hidden = true;
+        analysisStatus.textContent =
+          "메뉴가 추가되었습니다. 입력 내용을 확인한 뒤 비교해 주세요.";
+        menuNameInput.focus();
+      });
+
+      analyzeButton.addEventListener("click", async () => {
+        if (
+          !isLoaded ||
+          isAnalyzing ||
+          savedAllergies.length === 0 ||
+          menuItems.length === 0
+        ) {
+          return;
+        }
+
+        isAnalyzing = true;
+        analysisStatus.textContent = "급식 메뉴를 비교하고 있습니다.";
+        analysisResults.replaceChildren();
+        analysisDisclaimer.hidden = true;
+        updateAnalysisControls();
+
+        try {
+          const payload = await requestJson("/api/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              menus: menuItems.map((menu) => ({
+                id: menu.id,
+                name: menu.name,
+                allergens: menu.allergens,
+                is_information_complete: menu.isInformationComplete,
+              })),
+            }),
+          });
+
+          renderAnalysisResults(payload);
+          analysisStatus.textContent =
+            `메뉴 ${payload.results.length}개의 비교 결과입니다.`;
+        } catch (error) {
+          analysisStatus.textContent = error instanceof TypeError
+            ? "API 서버에 연결할 수 없어 비교하지 못했습니다."
+            : `비교하지 못했습니다. ${error.message}`;
+        } finally {
+          isAnalyzing = false;
+          updateAnalysisControls();
         }
       });
 
