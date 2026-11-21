@@ -255,10 +255,10 @@
       </section>
 
       <section class="card" aria-labelledby="comparison-heading">
-        <h2 id="comparison-heading">급식 메뉴 알레르기 비교</h2>
+        <h2 id="comparison-heading">급식 메뉴 입력·검토</h2>
         <p class="help-text">
-          급식표에서 확인한 메뉴명과 알레르기 표시를 입력해 주세요.
-          비교에는 저장된 알레르기 정보가 사용됩니다.
+          이미지 추출 대신 급식표의 메뉴명과 알레르기 표시를 직접 입력하고 검토합니다.
+          검토 완료로 저장한 메뉴만 비교에 사용됩니다.
         </p>
 
         <form id="menu-form">
@@ -289,11 +289,27 @@
           </fieldset>
           <div class="actions">
             <button id="add-menu-button" type="submit" disabled>메뉴 추가</button>
-            <button id="analyze-button" type="button" disabled>비교하기</button>
+            <button
+              id="cancel-menu-edit-button"
+              class="secondary"
+              type="button"
+              hidden
+            >
+              수정 취소
+            </button>
           </div>
         </form>
 
         <ul id="menu-list" class="menu-list" aria-label="비교할 메뉴 목록"></ul>
+        <div class="actions">
+          <button id="save-meal-sheet-button" type="button" disabled>
+            변경 저장
+          </button>
+          <button id="confirm-meal-sheet-button" type="button" disabled>
+            검토 완료 및 저장
+          </button>
+          <button id="analyze-button" type="button" disabled>비교하기</button>
+        </div>
         <p id="analysis-status" role="status" aria-live="polite">
           알레르기 정보를 불러오는 중입니다.
         </p>
@@ -324,6 +340,15 @@
         "#menu-information-complete",
       );
       const addMenuButton = document.querySelector("#add-menu-button");
+      const cancelMenuEditButton = document.querySelector(
+        "#cancel-menu-edit-button",
+      );
+      const saveMealSheetButton = document.querySelector(
+        "#save-meal-sheet-button",
+      );
+      const confirmMealSheetButton = document.querySelector(
+        "#confirm-meal-sheet-button",
+      );
       const analyzeButton = document.querySelector("#analyze-button");
       const menuList = document.querySelector("#menu-list");
       const analysisStatus = document.querySelector("#analysis-status");
@@ -333,7 +358,11 @@
       let allergyOptions = [];
       let savedAllergies = [];
       let menuItems = [];
-      let nextMenuId = 1;
+      let editingMenuId = null;
+      let isMealSheetLoaded = false;
+      let isMealSheetReviewed = false;
+      let isMealSheetDirty = false;
+      let isSavingMealSheet = false;
       let isLoaded = false;
       let isSaving = false;
       let isAnalyzing = false;
@@ -415,15 +444,89 @@
           currentAllergies.some(
             (allergy, index) => allergy !== savedAllergies[index],
           );
+        const canConfirmMealSheet =
+          menuItems.length > 0 &&
+          menuItems.every((menu) => menu.name.trim().length > 0);
+
         addMenuButton.disabled =
-          !isLoaded || isAnalyzing || !menuNameInput.value.trim();
+          !isLoaded ||
+          !isMealSheetLoaded ||
+          isSavingMealSheet ||
+          isAnalyzing ||
+          !menuNameInput.value.trim();
+        saveMealSheetButton.disabled =
+          !isMealSheetLoaded ||
+          isSavingMealSheet ||
+          isAnalyzing ||
+          !isMealSheetDirty ||
+          editingMenuId !== null;
+        confirmMealSheetButton.disabled =
+          !isMealSheetLoaded ||
+          isSavingMealSheet ||
+          isAnalyzing ||
+          !canConfirmMealSheet ||
+          (isMealSheetReviewed && !isMealSheetDirty) ||
+          editingMenuId !== null;
         analyzeButton.disabled =
           !isLoaded ||
+          !isMealSheetLoaded ||
           isAnalyzing ||
+          isSavingMealSheet ||
+          !isMealSheetReviewed ||
+          isMealSheetDirty ||
+          editingMenuId !== null ||
           savedAllergies.length === 0 ||
           hasUnsavedAllergyChanges ||
           menuItems.length === 0;
-        menuEntryFieldset.disabled = !isLoaded || isAnalyzing;
+        menuEntryFieldset.disabled =
+          !isLoaded ||
+          !isMealSheetLoaded ||
+          isSavingMealSheet ||
+          isAnalyzing;
+      }
+
+      function isValidMealSheet(value) {
+        return (
+          value !== null &&
+          typeof value === "object" &&
+          value.source === "manual" &&
+          typeof value.reviewed === "boolean" &&
+          Array.isArray(value.menus) &&
+          value.menus.every(
+            (menu) =>
+              menu &&
+              typeof menu.id === "string" &&
+              menu.id.length > 0 &&
+              typeof menu.name === "string" &&
+              (menu.allergens === null ||
+                (Array.isArray(menu.allergens) &&
+                  menu.allergens.every((item) => typeof item === "string"))) &&
+              typeof menu.is_information_complete === "boolean",
+          ) &&
+          new Set(value.menus.map((menu) => menu.id)).size ===
+            value.menus.length &&
+          (!value.reviewed ||
+            (value.menus.length > 0 &&
+              value.menus.every((menu) => menu.name.trim().length > 0)))
+        );
+      }
+
+      function markMealSheetDirty() {
+        isMealSheetDirty = true;
+        isMealSheetReviewed = false;
+        analysisResults.replaceChildren();
+        analysisDisclaimer.hidden = true;
+        analysisStatus.textContent =
+          "저장되지 않은 메뉴 변경 사항이 있습니다. 저장하거나 검토 완료로 저장해 주세요.";
+        updateAnalysisControls();
+      }
+
+      function resetMenuEditor() {
+        editingMenuId = null;
+        menuForm.reset();
+        addMenuButton.textContent = "메뉴 추가";
+        cancelMenuEditButton.hidden = true;
+        updateAnalysisControls();
       }
 
       function renderMenuItems() {
@@ -437,23 +540,48 @@
           header.className = "menu-item-header";
           const name = document.createElement("strong");
           name.textContent = menu.name;
+          const actions = document.createElement("div");
+          actions.className = "actions";
+          const editButton = document.createElement("button");
+          editButton.type = "button";
+          editButton.className = "secondary";
+          editButton.textContent = "수정";
+          editButton.setAttribute("aria-label", `${menu.name} 메뉴 수정`);
+          editButton.disabled = isSavingMealSheet || isAnalyzing;
+          editButton.addEventListener("click", () => {
+            editingMenuId = menu.id;
+            menuNameInput.value = menu.name;
+            menuAllergensInput.value = (menu.allergens || []).join(", ");
+            menuInformationComplete.checked =
+              menu.isInformationComplete;
+            addMenuButton.textContent = "수정 적용";
+            cancelMenuEditButton.hidden = false;
+            analysisStatus.textContent =
+              "메뉴를 수정 중입니다. 적용한 뒤 저장 또는 검토 완료로 저장해 주세요.";
+            updateAnalysisControls();
+            menuNameInput.focus();
+          });
           const removeButton = document.createElement("button");
           removeButton.type = "button";
           removeButton.className = "secondary";
           removeButton.textContent = "삭제";
           removeButton.setAttribute("aria-label", `${menu.name} 메뉴 삭제`);
+          removeButton.disabled = isSavingMealSheet || isAnalyzing;
           removeButton.addEventListener("click", () => {
             menuItems = menuItems.filter((item) => item.id !== menu.id);
+            if (editingMenuId === menu.id) {
+              resetMenuEditor();
+            }
+            markMealSheetDirty();
             renderMenuItems();
-            analysisResults.replaceChildren();
-            analysisDisclaimer.hidden = true;
-            updateAnalysisControls();
           });
-          header.append(name, removeButton);
+          actions.append(editButton, removeButton);
+          header.append(name, actions);
 
           const details = document.createElement("p");
-          const allergenText = menu.allergens.length
-            ? menu.allergens.join(", ")
+          const allergens = menu.allergens || [];
+          const allergenText = allergens.length
+            ? allergens.join(", ")
             : "입력된 표시 없음";
           details.textContent =
             `알레르기 표시: ${allergenText} · ` +
@@ -577,10 +705,22 @@
 
       async function loadProfile() {
         isLoaded = false;
+        isMealSheetLoaded = false;
+        isMealSheetReviewed = false;
+        isMealSheetDirty = false;
+        menuItems = [];
+        editingMenuId = null;
         fieldset.disabled = true;
         saveButton.disabled = true;
         retryButton.hidden = true;
         saveStatus.textContent = "저장된 정보를 불러오는 중입니다.";
+        analysisResults.replaceChildren();
+        analysisDisclaimer.hidden = true;
+        menuList.replaceChildren();
+        menuForm.reset();
+        addMenuButton.textContent = "메뉴 추가";
+        cancelMenuEditButton.hidden = true;
+        analysisStatus.textContent = "저장된 급식표 정보를 불러오는 중입니다.";
         updateAnalysisControls();
 
         try {
@@ -611,8 +751,35 @@
             : "비교하려면 먼저 알레르기 정보를 등록해 주세요.";
         } catch (error) {
           showLoadError(error);
-          analysisStatus.textContent =
-            "알레르기 정보를 불러오지 못해 비교할 수 없습니다.";
+          updateAnalysisControls();
+          return;
+        }
+
+        try {
+          const mealSheet = await requestJson("/api/meal-sheets/current");
+          if (!isValidMealSheet(mealSheet)) {
+            throw new Error("급식표 응답 형식을 확인할 수 없습니다.");
+          }
+
+          menuItems = mealSheet.menus.map((menu) => ({
+            id: menu.id,
+            name: menu.name,
+            allergens: menu.allergens,
+            isInformationComplete: menu.is_information_complete,
+          }));
+          isMealSheetReviewed = mealSheet.reviewed;
+          isMealSheetLoaded = true;
+          renderMenuItems();
+          analysisStatus.textContent = isMealSheetReviewed
+            ? "검토 완료된 급식표를 불러왔습니다."
+            : menuItems.length
+              ? "저장된 초안을 불러왔습니다. 내용을 확인한 뒤 검토 완료로 저장해 주세요."
+              : "급식 메뉴를 직접 입력한 뒤 저장하거나 검토 완료로 저장해 주세요.";
+        } catch (error) {
+          analysisStatus.textContent = error instanceof TypeError
+            ? "급식표 API에 연결할 수 없습니다. 서버 상태를 확인해 주세요."
+            : `급식표를 불러오지 못했습니다. ${error.message}`;
+          retryButton.hidden = false;
           updateAnalysisControls();
         }
       }
@@ -664,32 +831,121 @@
       menuForm.addEventListener("submit", (event) => {
         event.preventDefault();
         const name = menuNameInput.value.trim();
-        if (!isLoaded || !name || isAnalyzing) {
+        if (
+          !isLoaded ||
+          !isMealSheetLoaded ||
+          !name ||
+          isSavingMealSheet ||
+          isAnalyzing
+        ) {
           return;
         }
 
-        menuItems.push({
-          id: `menu-${nextMenuId++}`,
+        const updatedMenu = {
+          id: editingMenuId || crypto.randomUUID(),
           name,
           allergens: menuAllergensInput.value
             .split(",")
             .map((allergen) => allergen.trim())
             .filter(Boolean),
           isInformationComplete: menuInformationComplete.checked,
-        });
-        menuForm.reset();
+        };
+        if (editingMenuId) {
+          menuItems = menuItems.map((menu) =>
+            menu.id === editingMenuId ? updatedMenu : menu
+          );
+        } else {
+          menuItems.push(updatedMenu);
+        }
+        resetMenuEditor();
+        markMealSheetDirty();
         renderMenuItems();
-        analysisResults.replaceChildren();
-        analysisDisclaimer.hidden = true;
+      });
+
+      cancelMenuEditButton.addEventListener("click", () => {
+        resetMenuEditor();
         analysisStatus.textContent =
-          "메뉴가 추가되었습니다. 입력 내용을 확인한 뒤 비교해 주세요.";
-        menuNameInput.focus();
+          isMealSheetReviewed
+            ? "검토 완료된 급식표입니다."
+            : "메뉴 수정을 취소했습니다.";
+      });
+
+      async function saveMealSheet(reviewed) {
+        if (
+          !isMealSheetLoaded ||
+          isSavingMealSheet ||
+          isAnalyzing ||
+          editingMenuId !== null
+        ) {
+          return;
+        }
+        if (
+          reviewed &&
+          (menuItems.length === 0 ||
+            menuItems.some((menu) => !menu.name.trim()))
+        ) {
+          analysisStatus.textContent =
+            "메뉴명을 확인하고 메뉴를 하나 이상 추가해 주세요.";
+          return;
+        }
+
+        const submittedMenus = menuItems.map((menu) => ({
+          id: menu.id,
+          name: menu.name,
+          allergens: menu.allergens,
+          is_information_complete: menu.isInformationComplete,
+        }));
+        isSavingMealSheet = true;
+        analysisStatus.textContent = reviewed
+          ? "검토 완료한 급식표를 저장하고 있습니다."
+          : "급식표 변경 사항을 저장하고 있습니다.";
+        updateAnalysisControls();
+
+        try {
+          const savedSheet = await requestJson("/api/meal-sheets/current", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewed, menus: submittedMenus }),
+          });
+          if (
+            !isValidMealSheet(savedSheet) ||
+            savedSheet.reviewed !== reviewed ||
+            JSON.stringify(savedSheet.menus) !== JSON.stringify(submittedMenus)
+          ) {
+            throw new Error("저장 결과를 확인할 수 없습니다.");
+          }
+
+          isMealSheetReviewed = savedSheet.reviewed;
+          isMealSheetDirty = false;
+          analysisStatus.textContent = reviewed
+            ? "검토 완료로 저장했습니다. 이제 비교할 수 있습니다."
+            : "변경 사항을 저장했습니다. 비교하려면 검토 완료로 저장해 주세요.";
+        } catch (error) {
+          analysisStatus.textContent = error instanceof TypeError
+            ? "급식표 API에 연결할 수 없어 저장하지 못했습니다."
+            : `급식표를 저장하지 못했습니다. ${error.message}`;
+        } finally {
+          isSavingMealSheet = false;
+          renderMenuItems();
+        }
+      }
+
+      saveMealSheetButton.addEventListener("click", () => {
+        saveMealSheet(false);
+      });
+      confirmMealSheetButton.addEventListener("click", () => {
+        saveMealSheet(true);
       });
 
       analyzeButton.addEventListener("click", async () => {
         if (
           !isLoaded ||
+          !isMealSheetLoaded ||
           isAnalyzing ||
+          isSavingMealSheet ||
+          !isMealSheetReviewed ||
+          isMealSheetDirty ||
+          editingMenuId !== null ||
           savedAllergies.length === 0 ||
           menuItems.length === 0
         ) {
@@ -705,15 +961,6 @@
         try {
           const payload = await requestJson("/api/analyze", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              menus: menuItems.map((menu) => ({
-                id: menu.id,
-                name: menu.name,
-                allergens: menu.allergens,
-                is_information_complete: menu.isInformationComplete,
-              })),
-            }),
           });
 
           renderAnalysisResults(payload);

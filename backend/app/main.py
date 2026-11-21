@@ -4,11 +4,11 @@ from typing import Literal
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.allergies import ALLERGY_OPTIONS
-from backend.app import profile_storage
 from backend.app.comparison import MenuItem, compare_menus
+from backend.app import meal_sheet_storage, profile_storage
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -66,8 +66,21 @@ class MenuInput(BaseModel):
         ]
 
 
-class AnalysisRequest(BaseModel):
-    menus: list[MenuInput] = Field(default_factory=list)
+class MealSheetUpdate(BaseModel):
+    reviewed: bool = False
+    menus: list[MenuInput]
+
+    @model_validator(mode="after")
+    def validate_meal_sheet(self) -> "MealSheetUpdate":
+        menu_ids = [menu.id for menu in self.menus]
+        if len(menu_ids) != len(set(menu_ids)):
+            raise ValueError("중복 메뉴 ID는 사용할 수 없습니다.")
+        if self.reviewed:
+            if not self.menus:
+                raise ValueError("메뉴를 추가한 뒤 검토 완료로 저장해 주세요.")
+            if any(not menu.name for menu in self.menus):
+                raise ValueError("검토 완료된 메뉴에는 메뉴명이 필요합니다.")
+        return self
 
 
 class ComparisonResultResponse(BaseModel):
@@ -82,6 +95,12 @@ class ComparisonResultResponse(BaseModel):
 class AnalysisResponse(BaseModel):
     results: list[ComparisonResultResponse]
     disclaimer: str
+
+
+class MealSheetResponse(BaseModel):
+    source: Literal["manual"]
+    reviewed: bool
+    menus: list[MenuInput]
 
 
 @app.get("/health")
@@ -110,8 +129,41 @@ def update_profile(selection: AllergySelection) -> ProfileResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get(
+    "/api/meal-sheets/current",
+    response_model=MealSheetResponse,
+)
+def get_current_meal_sheet() -> MealSheetResponse:
+    try:
+        return meal_sheet_storage.load_meal_sheet()
+    except meal_sheet_storage.MealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put(
+    "/api/meal-sheets/current",
+    response_model=MealSheetResponse,
+)
+def update_current_meal_sheet(
+    update: MealSheetUpdate,
+) -> MealSheetResponse:
+    menus = [
+        {
+            "id": menu.id,
+            "name": menu.name,
+            "allergens": menu.allergens,
+            "is_information_complete": menu.is_information_complete,
+        }
+        for menu in update.menus
+    ]
+    try:
+        return meal_sheet_storage.save_meal_sheet(menus, update.reviewed)
+    except meal_sheet_storage.MealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/api/analyze", response_model=AnalysisResponse)
-def analyze(request: AnalysisRequest) -> AnalysisResponse:
+def analyze() -> AnalysisResponse:
     try:
         profile = profile_storage.load_profile()
     except profile_storage.ProfileStorageError as exc:
@@ -123,14 +175,29 @@ def analyze(request: AnalysisRequest) -> AnalysisResponse:
             detail="먼저 알레르기 정보를 등록해 주세요.",
         )
 
+    try:
+        meal_sheet = meal_sheet_storage.load_meal_sheet()
+    except meal_sheet_storage.MealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not meal_sheet["reviewed"]:
+        raise HTTPException(
+            status_code=409,
+            detail="급식 메뉴를 검토 완료로 저장한 뒤 비교해 주세요.",
+        )
+
     menus = [
         MenuItem(
-            id=menu.id,
-            name=menu.name,
-            allergens=tuple(menu.allergens) if menu.allergens is not None else None,
-            is_information_complete=menu.is_information_complete,
+            id=menu["id"],
+            name=menu["name"],
+            allergens=(
+                tuple(menu["allergens"])
+                if menu["allergens"] is not None
+                else None
+            ),
+            is_information_complete=menu["is_information_complete"],
         )
-        for menu in request.menus
+        for menu in meal_sheet["menus"]
     ]
     results = compare_menus(profile["allergies"], menus)
 

@@ -4,7 +4,7 @@ from time import perf_counter
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app import profile_storage
+from backend.app import meal_sheet_storage, profile_storage
 from backend.app.comparison import MenuItem, compare_menus
 from backend.app.main import app
 
@@ -13,6 +13,13 @@ from backend.app.main import app
 def profile_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "data" / "profile.json"
     monkeypatch.setattr(profile_storage, "PROFILE_FILE", path)
+    return path
+
+
+@pytest.fixture
+def meal_sheet_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "data" / "meal_sheet.json"
+    monkeypatch.setattr(meal_sheet_storage, "MEAL_SHEET_FILE", path)
     return path
 
 
@@ -168,21 +175,24 @@ def test_twenty_menus_are_compared_within_one_second() -> None:
     assert elapsed < 1
 
 
-def test_analyze_api_uses_saved_profile(profile_file: Path) -> None:
+def test_analyze_api_uses_saved_profile_and_reviewed_meal_sheet(
+    profile_file: Path, meal_sheet_file: Path
+) -> None:
     profile_storage.save_profile(["우유", "대두"])
-    request = {
-        "menus": [
+    meal_sheet_storage.save_meal_sheet(
+        [
             {
                 "id": "m1",
                 "name": "우유 수프",
                 "allergens": ["우유"],
                 "is_information_complete": True,
             }
-        ]
-    }
+        ],
+        reviewed=True,
+    )
 
     with TestClient(app) as client:
-        response = client.post("/api/analyze", json=request)
+        response = client.post("/api/analyze")
 
     assert response.status_code == 200
     result = response.json()["results"][0]
@@ -192,22 +202,39 @@ def test_analyze_api_uses_saved_profile(profile_file: Path) -> None:
     assert response.json()["disclaimer"]
 
 
-def test_analyze_api_requires_registered_allergies(profile_file: Path) -> None:
+def test_analyze_api_requires_registered_allergies(
+    profile_file: Path, meal_sheet_file: Path
+) -> None:
     with TestClient(app) as client:
-        response = client.post("/api/analyze", json={"menus": []})
+        response = client.post("/api/analyze")
 
     assert response.status_code == 409
     assert response.json()["detail"] == "먼저 알레르기 정보를 등록해 주세요."
 
 
-def test_analyze_api_accepts_empty_menu_list(profile_file: Path) -> None:
+def test_analyze_api_requires_a_reviewed_meal_sheet(
+    profile_file: Path, meal_sheet_file: Path
+) -> None:
     profile_storage.save_profile(["우유"])
+    meal_sheet_storage.save_meal_sheet(
+        [
+            {
+                "id": "m1",
+                "name": "우유 수프",
+                "allergens": ["우유"],
+                "is_information_complete": True,
+            }
+        ],
+        reviewed=False,
+    )
 
     with TestClient(app) as client:
-        response = client.post("/api/analyze", json={"menus": []})
+        response = client.post("/api/analyze")
 
-    assert response.status_code == 200
-    assert response.json()["results"] == []
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "급식 메뉴를 검토 완료로 저장한 뒤 비교해 주세요."
+    )
 
 
 def test_analyze_api_reports_corrupt_profile(profile_file: Path) -> None:
@@ -215,33 +242,12 @@ def test_analyze_api_reports_corrupt_profile(profile_file: Path) -> None:
     profile_file.write_text("{invalid", encoding="utf-8")
 
     with TestClient(app) as client:
-        response = client.post("/api/analyze", json={"menus": []})
+        response = client.post("/api/analyze")
 
     assert response.status_code == 500
     assert response.json()["detail"] == (
         "저장된 알레르기 정보 파일을 읽을 수 없습니다."
     )
-
-
-def test_analyze_api_rejects_malformed_menu(profile_file: Path) -> None:
-    profile_storage.save_profile(["우유"])
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/analyze",
-            json={
-                "menus": [
-                    {
-                        "id": "",
-                        "name": "메뉴",
-                        "allergens": ["우유"],
-                        "is_information_complete": True,
-                    }
-                ]
-            },
-        )
-
-    assert response.status_code == 422
 
 
 def test_analyze_api_allows_frontend_cors_preflight() -> None:
