@@ -1,14 +1,15 @@
 from pathlib import Path
+from datetime import date
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.allergies import ALLERGY_OPTIONS
 from backend.app.comparison import MenuItem, compare_menus
-from backend.app import meal_sheet_storage, profile_storage
+from backend.app import date_meal_sheet_storage, meal_sheet_storage, profile_storage
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -103,6 +104,54 @@ class MealSheetResponse(BaseModel):
     menus: list[MenuInput]
 
 
+class DateMealMenuInput(MenuInput):
+    meal_type: Literal["morning_snack", "lunch", "afternoon_snack"] | None = None
+
+
+class DateMealSheetUpdate(BaseModel):
+    status: Literal["DRAFT", "REVIEWED", "NO_MEAL"]
+    menus: list[DateMealMenuInput]
+    replace_existing: bool = False
+
+    @model_validator(mode="after")
+    def validate_date_meal_sheet(self) -> "DateMealSheetUpdate":
+        menu_ids = [menu.id for menu in self.menus]
+        if len(menu_ids) != len(set(menu_ids)):
+            raise ValueError("중복 메뉴 ID는 사용할 수 없습니다.")
+        if self.status == "NO_MEAL" and self.menus:
+            raise ValueError("급식 없음 상태에는 메뉴를 저장할 수 없습니다.")
+        if self.status == "REVIEWED":
+            if not self.menus:
+                raise ValueError(
+                    "검토 완료로 저장하려면 메뉴를 하나 이상 추가해 주세요."
+                )
+            if any(not menu.name for menu in self.menus):
+                raise ValueError("검토 완료된 메뉴에는 메뉴명이 필요합니다.")
+        return self
+
+
+class DateMealSheetResponse(BaseModel):
+    date: date
+    status: Literal["NO_DATA", "DRAFT", "REVIEWED", "NO_MEAL"]
+    source: Literal["manual"]
+    service_status: Literal["provided", "no_meal"] | None
+    reviewed: bool
+    menus: list[DateMealMenuInput]
+
+
+class MonthMealSheetsResponse(BaseModel):
+    month: str
+    sheets: list[DateMealSheetResponse]
+
+
+class UnassignedMealSheetResponse(BaseModel):
+    status: Literal["NO_DATA", "UNASSIGNED"]
+    date: None
+    source: Literal["manual"]
+    reviewed: bool
+    menus: list[DateMealMenuInput]
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
@@ -159,6 +208,77 @@ def update_current_meal_sheet(
     try:
         return meal_sheet_storage.save_meal_sheet(menus, update.reviewed)
     except meal_sheet_storage.MealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/meal-sheets",
+    response_model=MonthMealSheetsResponse,
+)
+def get_month_meal_sheets(
+    month: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+) -> MonthMealSheetsResponse:
+    try:
+        sheets = date_meal_sheet_storage.list_month_meal_sheets(month)
+    except date_meal_sheet_storage.InvalidMonthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except date_meal_sheet_storage.DateMealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return MonthMealSheetsResponse(month=month, sheets=sheets)
+
+
+@app.get(
+    "/api/meal-sheets/unassigned",
+    response_model=UnassignedMealSheetResponse,
+)
+def get_unassigned_meal_sheet() -> UnassignedMealSheetResponse:
+    try:
+        return date_meal_sheet_storage.get_unassigned_legacy_meal_sheet()
+    except date_meal_sheet_storage.DateMealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/meal-sheets/{selected_date}",
+    response_model=DateMealSheetResponse,
+)
+def get_date_meal_sheet(selected_date: date) -> DateMealSheetResponse:
+    try:
+        return date_meal_sheet_storage.get_date_meal_sheet(
+            selected_date.isoformat()
+        )
+    except date_meal_sheet_storage.DateMealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put(
+    "/api/meal-sheets/{selected_date}",
+    response_model=DateMealSheetResponse,
+)
+def update_date_meal_sheet(
+    selected_date: date,
+    update: DateMealSheetUpdate,
+) -> DateMealSheetResponse:
+    menus = [
+        {
+            "id": menu.id,
+            "name": menu.name,
+            "allergens": menu.allergens,
+            "is_information_complete": menu.is_information_complete,
+            "meal_type": menu.meal_type,
+        }
+        for menu in update.menus
+    ]
+    try:
+        return date_meal_sheet_storage.save_date_meal_sheet(
+            selected_date.isoformat(),
+            update.status,
+            menus,
+            update.replace_existing,
+        )
+    except date_meal_sheet_storage.ExistingDateMealSheetError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except date_meal_sheet_storage.DateMealSheetStorageError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

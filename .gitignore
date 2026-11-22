@@ -26,3 +26,5 @@ DEVELOPMENT_PLAN.md
 /backend/data/.profile-*.tmp
 /backend/data/meal_sheet.json
 /backend/data/.meal-sheet-*.tmp
+/backend/data/meal_sheets.json
+/backend/data/.meal-sheets-*.tmp
