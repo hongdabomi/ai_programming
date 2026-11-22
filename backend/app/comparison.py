@@ -13,6 +13,8 @@ ComparisonStatus = Literal["MATCH", "CHECK_NEEDED", "NOT_IDENTIFIED"]
 NUMBERED_ALLERGEN_PATTERN = re.compile(
     r"(?P<number>[1-9]|1[0-9])(?:\.\s*(?P<name>.+))?"
 )
+LEGACY_LEGEND_PREFIX = "범례 확인 필요:"
+CIRCLED_MARKING_PATTERN = re.compile(r"[\u2460-\u2472]+")
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,16 @@ def _resolve_allergen(label: str) -> str | None:
     return allergen
 
 
+def _resolve_clear_circled_marking(label: str) -> set[str] | None:
+    marking = label.strip().removeprefix(LEGACY_LEGEND_PREFIX).strip()
+    if not CIRCLED_MARKING_PATTERN.fullmatch(marking):
+        return None
+    return {
+        ALLERGEN_NUMBER_TO_NAME[ord(character) - 0x2460 + 1]
+        for character in marking
+    }
+
+
 def compare_menus(
     profile_allergies: Sequence[str], menus: Sequence[MenuItem]
 ) -> list[ComparisonResult]:
@@ -61,14 +73,17 @@ def compare_menus(
 
     for menu in menus:
         evidence = list(dict.fromkeys(menu.allergens or ()))
-        resolved = {
-            allergen
-            for label in evidence
-            if (allergen := _resolve_allergen(label)) is not None
-        }
-        unrecognized = [
-            label for label in evidence if _resolve_allergen(label) is None
-        ]
+        resolved: set[str] = set()
+        unrecognized: list[str] = []
+        has_clear_circled_marking = False
+        for label in evidence:
+            if (allergen := _resolve_allergen(label)) is not None:
+                resolved.add(allergen)
+            elif (circled := _resolve_clear_circled_marking(label)) is not None:
+                resolved.update(circled)
+                has_clear_circled_marking = True
+            else:
+                unrecognized.append(label)
         matched = [allergen for allergen in registered if allergen in resolved]
 
         concerns: list[str] = []
@@ -76,12 +91,12 @@ def compare_menus(
             concerns.append("메뉴명이 입력되지 않았습니다.")
         if menu.allergens is None:
             concerns.append("알레르기 표시 정보가 없습니다.")
-        if not menu.is_information_complete:
+        if not menu.is_information_complete and not (
+            has_clear_circled_marking and not unrecognized
+        ):
             concerns.append("표시 정보를 충분히 확인하지 못했습니다.")
         if unrecognized:
-            concerns.append(
-                f"해석할 수 없는 표시({', '.join(unrecognized)})가 있습니다."
-            )
+            concerns.append("알레르기 표시 중 해석하지 못한 부분이 있습니다.")
 
         if matched:
             status: ComparisonStatus = "MATCH"

@@ -400,21 +400,40 @@ def update_date_meal_sheet(
 def extract_meal_sheet_candidates(
     image: UploadFile | None = File(default=None),
     scope: ExtractionScope = Form(default="daily"),
+    selected_date: date | None = Form(default=None),
     reference_date: date | None = Form(default=None),
     reference_month: str | None = Form(default=None),
 ) -> MealImageExtractionResponse:
     image_bytes, mime_type = _validate_meal_image(image)
     normalized_month = _validate_reference_month(reference_month)
 
+    if selected_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail="이미지에서 확인할 날짜를 선택해 주세요.",
+        )
     if scope == "daily" and normalized_month is not None:
         raise HTTPException(
             status_code=422,
             detail="하루 급식표에는 날짜 참고값을 사용해 주세요.",
         )
+    if scope == "daily" and reference_date not in (None, selected_date):
+        raise HTTPException(
+            status_code=422,
+            detail="하루 급식표의 참고 날짜와 선택한 날짜가 다릅니다.",
+        )
     if scope == "monthly" and reference_date is not None:
         raise HTTPException(
             status_code=422,
             detail="월간 급식표에는 월 참고값을 사용해 주세요.",
+        )
+    if scope == "monthly" and normalized_month not in (
+        None,
+        selected_date.strftime("%Y-%m"),
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="월간 급식표의 조회 월과 선택한 날짜가 다릅니다.",
         )
 
     try:
@@ -422,6 +441,7 @@ def extract_meal_sheet_candidates(
             image_bytes,
             mime_type,
             scope,
+            selected_date,
         )
     except ai.GeminiConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -438,8 +458,13 @@ def extract_meal_sheet_candidates(
     return build_image_extraction_response(
         extraction,
         scope,
-        reference_date,
-        normalized_month,
+        selected_date,
+        selected_date if scope == "daily" else None,
+        (
+            normalized_month or selected_date.strftime("%Y-%m")
+            if scope == "monthly"
+            else None
+        ),
     )
 
 

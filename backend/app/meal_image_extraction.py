@@ -96,10 +96,12 @@ class MealImageExtractionResponse(BaseModel):
     source: Literal["uploaded-image"] = "uploaded-image"
     reviewed: Literal[False] = False
     scope: ExtractionScope
+    selected_date: date
     reference_date: date | None
     reference_month: str | None
     legend_status: LegendStatus
     legend_warnings: list[str]
+    extraction_warnings: list[str]
     menus: list[ImageMenuCandidate]
 
 
@@ -121,6 +123,98 @@ def _validate_full_date(menu: ExtractedMeal) -> tuple[date | None, bool]:
     if parsed.isoformat() != menu.date_iso:
         return None, True
     return parsed, False
+
+
+def _parse_image_month_day(date_text: str | None) -> tuple[int, int] | None:
+    if not date_text or re.search(r"(?<!\d)\d{4}(?!\d)", date_text):
+        return None
+
+    patterns = (
+        re.compile(
+            r"(?<!\d)(?P<month>0?[1-9]|1[0-2])\s*월\s*"
+            r"(?P<day>0?[1-9]|[12]\d|3[01])\s*일?(?!\d)"
+        ),
+        re.compile(
+            r"(?<!\d)(?P<month>0?[1-9]|1[0-2])\s*[./-]\s*"
+            r"(?P<day>0?[1-9]|[12]\d|3[01])(?![\d./-])"
+        ),
+    )
+    matches = [
+        match
+        for pattern in patterns
+        for match in pattern.finditer(date_text)
+    ]
+    if len(matches) != 1:
+        return None
+
+    month = int(matches[0].group("month"))
+    day = int(matches[0].group("day"))
+    try:
+        date(2000, month, day)
+    except ValueError:
+        return None
+    return month, day
+
+
+def _parse_image_full_date(date_text: str | None) -> date | None:
+    if not date_text:
+        return None
+
+    patterns = (
+        re.compile(
+            r"(?<!\d)(?P<year>\d{4})\s*년\s*"
+            r"(?P<month>0?[1-9]|1[0-2])\s*월\s*"
+            r"(?P<day>0?[1-9]|[12]\d|3[01])\s*일?(?!\d)"
+        ),
+        re.compile(
+            r"(?<!\d)(?P<year>\d{4})\s*[./-]\s*"
+            r"(?P<month>0?[1-9]|1[0-2])\s*[./-]\s*"
+            r"(?P<day>0?[1-9]|[12]\d|3[01])(?![\d./-])"
+        ),
+        re.compile(
+            r"(?<!\d)(?P<year>\d{4})\s*년\s*"
+            r"(?P<month>0?[1-9]|1[0-2])\s*월"
+            r"\s*[^\d\s][^\d]{0,39}(?P<day>0?[1-9]|[12]\d|3[01])\s*"
+            r"(?:일|\([월화수목금토일]\))(?!\d)"
+        ),
+    )
+    matches = [
+        match
+        for pattern in patterns
+        for match in pattern.finditer(date_text)
+    ]
+    if len(matches) != 1:
+        return None
+
+    try:
+        return date(
+            int(matches[0].group("year")),
+            int(matches[0].group("month")),
+            int(matches[0].group("day")),
+        )
+    except ValueError:
+        return None
+
+
+def _matches_selected_date(menu: ExtractedMeal, selected_date: date) -> bool:
+    candidate_date, _ = _validate_full_date(menu)
+    if candidate_date is not None:
+        printed_date = _parse_image_full_date(menu.date_text)
+        if printed_date is None and menu.date_text:
+            day_only = re.fullmatch(
+                r"\s*(0?[1-9]|[12]\d|3[01])\s*(?:일|\([월화수목금토일]\))?\s*",
+                menu.date_text,
+            )
+            if day_only and int(day_only.group(1)) == candidate_date.day:
+                printed_date = candidate_date
+        return (
+            printed_date == candidate_date
+            and candidate_date == selected_date
+        )
+    return _parse_image_month_day(menu.date_text) == (
+        selected_date.month,
+        selected_date.day,
+    )
 
 
 def _check_legend(
@@ -222,6 +316,7 @@ def _parse_allergen_marking(
 def build_image_extraction_response(
     extraction: GeminiMealExtraction,
     scope: ExtractionScope,
+    selected_date: date,
     reference_date: date | None,
     reference_month: str | None,
 ) -> MealImageExtractionResponse:
@@ -230,8 +325,39 @@ def build_image_extraction_response(
     )
     has_legend = extraction.legend_present or bool(extraction.legend_entries)
     candidates: list[ImageMenuCandidate] = []
+    matching_menus = [
+        menu
+        for menu in extraction.menus
+        if _matches_selected_date(menu, selected_date)
+        or (scope == "daily" and not menu.date_text and not menu.date_iso)
+    ]
+    extraction_warnings: list[str] = []
 
-    for menu in extraction.menus:
+    if not matching_menus:
+        if extraction.menus:
+            extraction_warnings.append(
+                f"선택한 날짜 {selected_date.isoformat()}에 연결된 메뉴를 확인하지 못했습니다. "
+                "급식 없음으로 확정하지 말고 이미지 날짜를 확인하거나 메뉴를 직접 입력해 주세요."
+            )
+        else:
+            extraction_warnings.append(
+                "이미지에서 메뉴를 확인하지 못했습니다. 급식 없음으로 간주하지 말고 "
+                "이미지와 날짜를 확인하거나 메뉴를 직접 입력해 주세요."
+            )
+    elif len(matching_menus) < len(extraction.menus):
+        extraction_warnings.append(
+            f"선택한 날짜 {selected_date.isoformat()}에 명확히 연결된 메뉴만 표시했습니다. "
+            "다른 날짜 또는 날짜를 확인할 수 없는 메뉴는 제외했습니다."
+        )
+    if any(
+        _validate_full_date(menu)[0] is None for menu in matching_menus
+    ):
+        extraction_warnings.append(
+            "이미지 날짜에 연도가 없거나 확인되지 않았습니다. 선택한 날짜와 실제 이미지 날짜를 "
+            "구분해 확인하고 저장 날짜를 직접 지정해 주세요."
+        )
+
+    for menu in matching_menus:
         candidate_date, date_requires_confirmation = _validate_full_date(menu)
         numbers, names, unknown = _parse_allergen_marking(
             menu.allergen_marking
@@ -249,9 +375,7 @@ def build_image_extraction_response(
         if menu.allergen_marking and menu.allergen_marking.strip():
             unresolved: list[str] = []
             if legend_status == "NEEDS_CONFIRMATION":
-                unresolved.append(
-                    f"범례 확인 필요: {menu.allergen_marking.strip()}"
-                )
+                unresolved.append(menu.allergen_marking.strip())
             else:
                 names.extend(
                     name
@@ -298,9 +422,11 @@ def build_image_extraction_response(
 
     return MealImageExtractionResponse(
         scope=scope,
+        selected_date=selected_date,
         reference_date=reference_date,
         reference_month=reference_month,
         legend_status=legend_status,
         legend_warnings=legend_warnings,
+        extraction_warnings=extraction_warnings,
         menus=candidates,
     )

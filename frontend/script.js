@@ -4,6 +4,7 @@ const form = document.querySelector("#profile-form");
 const fieldset = document.querySelector("#allergy-fieldset");
 const optionsContainer = document.querySelector("#allergy-options");
 const saveButton = document.querySelector("#save-button");
+const profileNextButton = document.querySelector("#profile-next-button");
 const retryButton = document.querySelector("#retry-button");
 const selectionSummary = document.querySelector("#selection-summary");
 const saveStatus = document.querySelector("#save-status");
@@ -31,7 +32,11 @@ const analyzeLegacyButton = document.querySelector("#analyze-legacy-button");
 const menuList = document.querySelector("#menu-list");
 const analysisStatus = document.querySelector("#analysis-status");
 const mealDateInput = document.querySelector("#meal-date-input");
+const dailyUploadDateInput = document.querySelector("#daily-upload-date-input");
 const mealMonthInput = document.querySelector("#meal-month-input");
+const monthlyTargetDateInput = document.querySelector(
+  "#monthly-target-date-input",
+);
 const dailyImageForm = document.querySelector("#daily-image-form");
 const dailyImageFieldset = document.querySelector("#daily-image-fieldset");
 const dailyImageInput = document.querySelector("#daily-image-input");
@@ -62,16 +67,19 @@ const legacyCard = document.querySelector("#unassigned-legacy-card");
 const legacySummary = document.querySelector("#legacy-meal-sheet-summary");
 const copyLegacyButton = document.querySelector("#copy-legacy-button");
 const analysisResults = document.querySelector("#analysis-results");
-const analysisDisclaimer = document.querySelector("#analysis-disclaimer");
-const analysisResultsStatus = document.querySelector("#analysis-results-status");
 const resultsHeading = document.querySelector("#results-heading");
 const resultsDescription = document.querySelector("#results-description");
+const contactRequestPanel = document.querySelector("#contact-request-panel");
+const contactRequestText = document.querySelector("#contact-request-text");
+const copyContactRequestStatus = document.querySelector("#copy-contact-request-status");
 const progressWrap = document.querySelector("#progress-wrap");
 const screens = {
   home: document.querySelector("#home-screen"),
   profile: document.querySelector("#profile-screen"),
   type: document.querySelector("#meal-type-screen"),
+  dailyUpload: document.querySelector("#daily-upload-screen"),
   monthly: document.querySelector("#monthly-screen"),
+  monthlyDate: document.querySelector("#monthly-date-screen"),
   review: document.querySelector("#meal-review-screen"),
   results: document.querySelector("#results-screen"),
 };
@@ -95,16 +103,29 @@ let selectedDate = "";
 let currentDateStatus = "NO_DATA";
 let legacyMealSheet = null;
 let reviewReturnStep = "type";
+let dateSelectionMode = "uploaded";
+let monthlyUploadedFile = null;
 let extractionDrafts = { daily: null, monthly: null };
 const savedExtractionCandidateIds = new Set();
 
 function showStep(step) {
+  if (step === "review") {
+    setMealSheetMode();
+    document.querySelector("#review-back-button").textContent =
+      reviewReturnStep === "dailyUpload"
+        ? "← 하루 급식표 업로드"
+        : reviewReturnStep === "monthlyDate"
+          ? "← 날짜 선택"
+          : "← 급식표 유형";
+  }
   for (const [name, screen] of Object.entries(screens)) {
     screen.hidden = name !== step;
   }
 
   progressWrap.hidden = step === "home";
-  const progressStep = step === "monthly" ? "type" : step;
+  const progressStep = ["dailyUpload", "monthly", "monthlyDate"].includes(step)
+    ? "type"
+    : step;
   document.querySelectorAll(".progress li").forEach((item) => {
     if (item.dataset.step === progressStep) {
       item.setAttribute("aria-current", "step");
@@ -135,9 +156,11 @@ function showStep(step) {
 function setMealSheetMode() {
   const title = document.querySelector("#meal-review-title");
   const description = document.querySelector("#meal-review-description");
-  title.textContent = "하루치 급식 메뉴를 확인해요";
+  title.textContent = reviewReturnStep === "monthlyDate"
+    ? "선택한 날짜의 급식표 인식 결과입니다"
+    : "하루 급식표 인식 결과입니다";
   description.textContent = selectedDate
-    ? `${selectedDate} 하루치 메뉴를 확인하고 필요한 내용을 직접 입력·수정해 주세요.`
+    ? `${selectedDate} 메뉴와 알레르기 표시를 확인하고 필요한 내용을 수정해 주세요.`
     : "하루의 모든 메뉴를 한 목록으로 확인하고, 필요한 내용을 직접 입력·수정해 주세요.";
 }
 
@@ -212,23 +235,47 @@ function resolveNumberedAllergen(allergen) {
 
 function renderAllergenTags(container, allergens) {
   container.className = "allergen-tags";
-  if (!allergens || allergens.length === 0) {
-    const tag = document.createElement("span");
-    tag.className = "allergen-tag unknown";
-    tag.textContent = "알레르기 표시 입력 없음";
-    container.append(tag);
-    return;
+  const tag = document.createElement("span");
+  tag.className = "allergen-tag";
+  if (allergens === null) {
+    tag.textContent = "알레르기 표시를 읽지 못함";
+    tag.classList.add("unknown");
+  } else if (allergens.length === 0) {
+    tag.textContent = "등록 알레르기 표시 없음";
+  } else {
+    const selectedNumbers = new Set(
+      savedAllergies.map((allergy) => allergyNameToNumber.get(allergy)).filter(Boolean),
+    );
+    const matched = new Set();
+    let hasUnclearMarking = false;
+    for (const label of allergens) {
+      const mapped = resolveNumberedAllergen(label);
+      if (mapped) {
+        if (savedAllergies.includes(mapped.name)) matched.add(mapped.name);
+        continue;
+      }
+      const marking = label.replace(/^범례 확인 필요:\s*/, "").trim();
+      if (/^[\u2460-\u2472]+$/u.test(marking)) {
+        for (const character of marking) {
+          const number = character.codePointAt(0) - 0x2460 + 1;
+          if (selectedNumbers.has(number)) {
+            matched.add(allergyNumberToName.get(number));
+          }
+        }
+      } else {
+        hasUnclearMarking = true;
+      }
+    }
+    if (matched.size > 0) {
+      tag.textContent = `등록 알레르기 표시 후보: ${Array.from(matched).join(", ")}`;
+    } else if (hasUnclearMarking) {
+      tag.textContent = "등록 알레르기 여부 확인 필요";
+      tag.classList.add("unknown");
+    } else {
+      tag.textContent = "등록 알레르기 표시 없음";
+    }
   }
-
-  for (const allergen of allergens) {
-    const mapped = resolveNumberedAllergen(allergen);
-    const tag = document.createElement("span");
-    tag.className = mapped ? "allergen-tag" : "allergen-tag unknown";
-    tag.textContent = mapped
-      ? `${mapped.number}. ${getAllergyDisplayName(mapped.name)}`
-      : `확인 필요 · ${allergen}`;
-    container.append(tag);
-  }
+  container.append(tag);
 }
 
 function isValidIsoDate(value) {
@@ -240,7 +287,7 @@ function isValidIsoDate(value) {
     parsed.toISOString().slice(0, 10) === value;
 }
 
-function isValidImageExtraction(value, scope) {
+function isValidImageExtraction(value, scope, selectedDate) {
   const validMealTypes = new Set([
     "morning_snack",
     "lunch",
@@ -252,6 +299,8 @@ function isValidImageExtraction(value, scope) {
     value.source === "uploaded-image" &&
     value.reviewed === false &&
     value.scope === scope &&
+    value.selected_date === selectedDate &&
+    isValidIsoDate(value.selected_date) &&
     (value.reference_date === null ||
       isValidIsoDate(value.reference_date)) &&
     (value.reference_month === null ||
@@ -261,6 +310,8 @@ function isValidImageExtraction(value, scope) {
     ) &&
     Array.isArray(value.legend_warnings) &&
     value.legend_warnings.every((warning) => typeof warning === "string") &&
+    Array.isArray(value.extraction_warnings) &&
+    value.extraction_warnings.every((warning) => typeof warning === "string") &&
     Array.isArray(value.menus) &&
     value.menus.every(
       (menu) =>
@@ -300,24 +351,19 @@ function renderExtractionResults(scope) {
   const summary = document.createElement("div");
   summary.className = "notice";
   const summaryTitle = document.createElement("strong");
-  summaryTitle.textContent = "Gemini가 추출한 검토 후보";
+  summaryTitle.textContent = "급식표에서 읽은 메뉴";
   const summaryText = document.createElement("p");
   summaryText.textContent =
-    "후보는 저장되거나 비교에 사용되지 않았습니다. 날짜와 각 표시를 확인한 뒤 메뉴별로 검토 화면에 가져오세요.";
+    `선택한 날짜: ${draft.selected_date}. 등록한 ${savedAllergies.join(", ")} 표시를 중심으로 확인해 주세요. 메뉴 옆 숫자는 급식표 원본의 알레르기 식품 번호예요.`;
   summary.append(summaryTitle, summaryText);
-  if (draft.legend_warnings.length) {
-    const warnings = document.createElement("ul");
-    for (const warning of draft.legend_warnings) {
+  if (draft.extraction_warnings.length) {
+    const extractionWarnings = document.createElement("ul");
+    for (const warning of draft.extraction_warnings) {
       const item = document.createElement("li");
       item.textContent = warning;
-      warnings.append(item);
+      extractionWarnings.append(item);
     }
-    summary.append(warnings);
-  } else if (draft.legend_status === "VERIFIED") {
-    const verifiedLegend = document.createElement("p");
-    verifiedLegend.textContent =
-      "이미지 범례와 프로젝트 대응표가 일치한 번호만 항목명으로 표시했습니다. 사용자 확인은 계속 필요합니다.";
-    summary.append(verifiedLegend);
+    summary.append(extractionWarnings);
   }
   container.append(summary);
 
@@ -325,10 +371,30 @@ function renderExtractionResults(scope) {
     const empty = document.createElement("p");
     empty.className = "help-text";
     empty.textContent =
-      "읽을 수 있는 메뉴 후보가 없습니다. 저장된 메뉴는 변경되지 않았으며 직접 입력할 수 있습니다.";
+      "선택한 날짜에 연결된 메뉴를 확인하지 못했습니다. 급식 없음으로 단정하지 말고 날짜와 이미지를 확인하거나 메뉴를 직접 입력해 주세요.";
     container.append(empty);
     return;
   }
+
+  const importAllButton = document.createElement("button");
+  importAllButton.className = "button-primary";
+  importAllButton.type = "button";
+  const updateImportAllButton = () => {
+    const available = draft.menus.filter(
+      (menu) =>
+        menu.assignedDate === draft.selected_date &&
+        !savedExtractionCandidateIds.has(menu.id) &&
+        !menuItems.some((item) => item.sourceCandidateId === menu.id),
+    );
+    importAllButton.textContent =
+      `선택 날짜 후보 ${available.length}개를 한 번에 검토하기`;
+    importAllButton.disabled = available.length === 0 || isExtractingImage;
+  };
+  updateImportAllButton();
+  importAllButton.addEventListener("click", () => {
+    importExtractedCandidates(scope);
+  });
+  container.append(importAllButton);
 
   const datedGroup = document.createElement("section");
   datedGroup.className = "extraction-group";
@@ -347,6 +413,16 @@ function renderExtractionResults(scope) {
   unassignedGroup.append(unassignedHeading, unassignedCards);
 
   for (const menu of draft.menus) {
+    const selectedNumbers = new Set(
+      savedAllergies.map((allergy) => allergyNameToNumber.get(allergy)).filter(Boolean),
+    );
+    const clearCircledMarking = menu.allergen_marking &&
+      /^[\u2460-\u2472]+$/u.test(menu.allergen_marking.trim());
+    const selectedMarkingNumbers = menu.allergen_numbers.filter(
+      (number) => selectedNumbers.has(number),
+    );
+    const unrelatedMarking = clearCircledMarking &&
+      selectedMarkingNumbers.length === 0;
     const card = document.createElement("article");
     card.className = "image-extraction-candidate";
 
@@ -356,7 +432,11 @@ function renderExtractionResults(scope) {
     name.textContent = menu.name || "읽기 어려운 메뉴명";
     const status = document.createElement("span");
     status.className = "badge";
-    status.textContent = "AI 후보 · 직접 확인 필요";
+    status.textContent = unrelatedMarking
+      ? "등록 알레르기 표시 없음"
+      : selectedMarkingNumbers.length > 0
+        ? "등록 알레르기 표시 후보"
+        : menu.allergen_marking ? "번호 확인 필요" : "표시 미인식";
     header.append(name, status);
 
     const sourceDate = document.createElement("p");
@@ -367,27 +447,28 @@ function renderExtractionResults(scope) {
     const sourceMarking = document.createElement("p");
     sourceMarking.className = "candidate-source";
     sourceMarking.textContent = menu.allergen_marking
-      ? `이미지 알레르기 표시: ${menu.allergen_marking}`
-      : "이미지에서 알레르기 표시를 읽지 못했습니다. 표시가 없다고 단정하지 마세요.";
+      ? `급식표 원본의 알레르기 번호: ${menu.allergen_marking}`
+      : "급식표의 알레르기 표시를 읽지 못했어요.";
+    sourceMarking.hidden = Boolean(unrelatedMarking);
 
     const mappedNumbers = document.createElement("p");
     mappedNumbers.className = "candidate-source";
-    mappedNumbers.textContent = menu.allergen_numbers.length
-      ? `번호 대응 후보: ${menu.allergen_numbers.map((number) =>
+    mappedNumbers.textContent = selectedMarkingNumbers.length
+      ? `등록 알레르기 번호 후보: ${selectedMarkingNumbers.map((number) =>
         `${number}. ${allergyNumberToName.get(number) || "확인 필요"}`
       ).join(" · ")}`
-      : "번호 대응 후보가 없습니다.";
+      : "";
+    mappedNumbers.hidden = selectedMarkingNumbers.length === 0;
 
-    const tags = document.createElement("div");
-    renderAllergenTags(tags, menu.allergens);
-
-    const warnings = document.createElement("ul");
-    warnings.className = "candidate-warnings";
-    for (const warning of menu.warnings) {
-      const item = document.createElement("li");
-      item.textContent = warning;
-      warnings.append(item);
-    }
+    const markingNote = document.createElement("p");
+    markingNote.className = "candidate-marking-note";
+    markingNote.textContent = unrelatedMarking
+      ? `읽힌 원형 번호에는 등록한 ${savedAllergies.join(", ")} 항목이 없어요.`
+      : selectedMarkingNumbers.length > 0
+        ? `등록한 ${savedAllergies.join(", ")} 번호가 보입니다. 원본 급식표에서 확인해 주세요.`
+        : menu.allergen_marking
+          ? "번호를 정확히 읽지 못했어요. 원본 급식표를 확인해 주세요."
+          : "원본에 표시가 없는지 확인해 주세요. 표시가 없으면 검토 화면에서 ‘표시 없음 확인’을 누를 수 있어요.";
 
     const dateLabel = document.createElement("label");
     dateLabel.className = "form-field";
@@ -399,17 +480,12 @@ function renderExtractionResults(scope) {
 
     if (
       menu.date &&
-      ((draft.scope === "daily" &&
-        draft.reference_date &&
-        menu.date !== draft.reference_date) ||
-        (draft.scope === "monthly" &&
-          draft.reference_month &&
-          menu.date.slice(0, 7) !== draft.reference_month))
+      menu.date !== draft.selected_date
     ) {
       const mismatch = document.createElement("p");
       mismatch.className = "candidate-warnings";
       mismatch.textContent =
-        "선택한 날짜/월과 이미지에서 읽은 날짜가 다릅니다. 저장 날짜를 확인해 주세요.";
+        "선택한 날짜와 이미지에서 읽은 날짜가 다릅니다. 저장 날짜를 확인해 주세요.";
       card.append(mismatch);
     } else if (!menu.date) {
       const unassigned = document.createElement("p");
@@ -439,6 +515,7 @@ function renderExtractionResults(scope) {
     dateInput.disabled = isInEditor || alreadySaved || isExtractingImage;
     dateInput.addEventListener("change", () => {
       menu.assignedDate = dateInput.value;
+      updateImportAllButton();
       importButton.disabled =
         !isValidIsoDate(menu.assignedDate) ||
         isInEditor ||
@@ -454,8 +531,7 @@ function renderExtractionResults(scope) {
       sourceDate,
       sourceMarking,
       mappedNumbers,
-      tags,
-      warnings,
+      markingNote,
       dateLabel,
       importButton,
     );
@@ -477,7 +553,9 @@ async function extractMealImage(scope) {
   const progress = isDaily
     ? dailyExtractionProgress
     : monthlyExtractionProgress;
-  const file = input.files && input.files[0];
+  const file = isDaily
+    ? input.files && input.files[0]
+    : monthlyUploadedFile || (input.files && input.files[0]);
   if (!file || isExtractingImage) {
     return;
   }
@@ -509,18 +587,22 @@ async function extractMealImage(scope) {
   const formData = new FormData();
   formData.append("image", file);
   formData.append("scope", scope);
+  const requestedDate = isDaily
+    ? dailyUploadDateInput.value
+    : monthlyTargetDateInput.value;
+  if (!isValidIsoDate(requestedDate)) {
+    status.textContent = "이미지에서 확인할 날짜를 먼저 선택해 주세요.";
+    return;
+  }
+  formData.append("selected_date", requestedDate);
   if (isDaily) {
-    if (!isValidIsoDate(selectedDate)) {
-      status.textContent = "하루치 이미지의 참고 날짜를 먼저 선택해 주세요.";
-      return;
-    }
-    formData.append("reference_date", selectedDate);
+    formData.append("reference_date", requestedDate);
   } else {
-    if (!mealMonthInput.value) {
-      status.textContent = "월간 급식표를 조회할 월을 먼저 선택해 주세요.";
+    if (requestedDate.slice(0, 7) !== mealMonthInput.value) {
+      status.textContent = "조회 월과 이미지에서 확인할 날짜를 맞춰 주세요.";
       return;
     }
-    formData.append("reference_month", mealMonthInput.value);
+    formData.append("reference_month", requestedDate.slice(0, 7));
   }
 
   isExtractingImage = true;
@@ -540,7 +622,7 @@ async function extractMealImage(scope) {
       body: formData,
       signal: controller.signal,
     });
-    if (!isValidImageExtraction(payload, scope)) {
+    if (!isValidImageExtraction(payload, scope, requestedDate)) {
       throw new Error("이미지 추출 응답 형식을 확인할 수 없습니다.");
     }
 
@@ -551,11 +633,16 @@ async function extractMealImage(scope) {
         assignedDate: menu.date || "",
       })),
     };
-    input.value = "";
+    if (isDaily) {
+      input.value = "";
+    }
     renderExtractionResults(scope);
     status.textContent = payload.menus.length
-      ? `${payload.menus.length}개 후보를 추출했습니다. 아직 저장하지 않았으며 날짜와 표시를 직접 검토해 주세요.`
-      : "읽을 수 있는 메뉴 후보가 없습니다. 저장된 메뉴는 변경되지 않았습니다.";
+      ? `${requestedDate}에 연결된 ${payload.menus.length}개 후보를 추출했습니다. 아직 저장하지 않았으며 날짜와 표시를 직접 검토해 주세요.`
+      : `${requestedDate}에 연결된 메뉴를 확인하지 못했습니다. 급식 없음으로 단정하지 말고 이미지를 확인해 주세요.`;
+    if (payload.menus.some((menu) => menu.date === requestedDate)) {
+      await importExtractedCandidates(scope);
+    }
   } catch (error) {
     if (timedOut || error.name === "AbortError") {
       status.textContent =
@@ -622,9 +709,62 @@ async function importExtractedCandidate(scope, candidateId) {
   markMealSheetDirty();
   renderMenuItems();
   renderExtractionResults(scope);
-  reviewReturnStep = scope === "monthly" ? "monthly" : "type";
+  reviewReturnStep = scope === "monthly" ? "monthlyDate" : "dailyUpload";
   analysisStatus.textContent =
     "AI 후보를 검토 목록에 가져왔습니다. 메뉴명과 알레르기 표시를 수정하고 사용자가 확인한 뒤 저장해 주세요.";
+  showStep("review");
+}
+
+async function importExtractedCandidates(scope) {
+  if (isExtractingImage || isSavingMealSheet) {
+    return;
+  }
+  const draft = extractionDrafts[scope];
+  if (!draft) {
+    return;
+  }
+  const candidates = draft.menus.filter(
+    (menu) =>
+      menu.assignedDate === draft.selected_date &&
+      !savedExtractionCandidateIds.has(menu.id) &&
+      !menuItems.some((item) => item.sourceCandidateId === menu.id),
+  );
+  if (candidates.length === 0) {
+    return;
+  }
+
+  if (selectedDate !== draft.selected_date) {
+    if (!confirmDateNavigation()) {
+      return;
+    }
+    try {
+      await loadDateMealSheet(draft.selected_date);
+      await loadMonthCalendar(draft.selected_date.slice(0, 7));
+    } catch (error) {
+      const status = scope === "daily"
+        ? dailyExtractionStatus
+        : monthlyExtractionStatus;
+      status.textContent =
+        `선택한 날짜를 불러오지 못했습니다. ${error.message}`;
+      return;
+    }
+  }
+
+  for (const menu of candidates) {
+    menuItems.push({
+      id: menu.id,
+      name: menu.name,
+      allergens: menu.allergens,
+      isInformationComplete: false,
+      mealType: menu.meal_type,
+      sourceCandidateId: menu.id,
+    });
+  }
+  markMealSheetDirty();
+  renderMenuItems();
+  reviewReturnStep = scope === "monthly" ? "monthlyDate" : "dailyUpload";
+  analysisStatus.textContent =
+    `${candidates.length}개 후보를 검토 목록에 가져왔습니다. 내용을 확인하고 검토 완료로 저장한 뒤 비교해 주세요.`;
   showStep("review");
 }
 
@@ -651,8 +791,6 @@ function renderOptions(options, selectedAllergies) {
     checkbox.addEventListener("change", () => {
       updateFormState();
       analysisResults.replaceChildren();
-      analysisDisclaimer.hidden = true;
-      analysisResultsStatus.textContent = "";
     });
 
     const text = document.createElement("span");
@@ -686,6 +824,8 @@ function updateFormState(statusMessage) {
   }
 
   saveButton.disabled = !isLoaded || isSaving || !hasUnsavedChanges;
+  profileNextButton.disabled =
+    !isLoaded || isSaving || hasUnsavedChanges || savedAllergies.length === 0;
   if (hasUnsavedChanges) {
     analysisStatus.textContent =
       "알레르기 정보에 저장되지 않은 변경 사항이 있습니다. 저장 후 비교할 수 있습니다.";
@@ -770,11 +910,13 @@ function updateAnalysisControls() {
 
 function updateImageUploadControls() {
   const imageRequestBusy = isExtractingImage || isSavingMealSheet || isAnalyzing;
+  mealDateInput.disabled = !isLoaded || imageRequestBusy;
+  mealMonthInput.disabled = !isLoaded || imageRequestBusy;
+  monthlyTargetDateInput.disabled = !isLoaded || imageRequestBusy;
   dailyImageFieldset.disabled =
     !isLoaded ||
     !isMealSheetLoaded ||
-    imageRequestBusy ||
-    editingMenuId !== null;
+    imageRequestBusy;
   extractDailyButton.disabled =
     dailyImageFieldset.disabled ||
     !dailyImageInput.files ||
@@ -783,8 +925,12 @@ function updateImageUploadControls() {
   extractMonthlyButton.disabled =
     monthlyImageFieldset.disabled ||
     !monthlyImageInput.files ||
-    monthlyImageInput.files.length === 0 ||
-    !mealMonthInput.value;
+    monthlyImageInput.files.length === 0;
+  document.querySelector("#view-monthly-results-button").disabled =
+    !isLoaded || imageRequestBusy ||
+    !isValidIsoDate(monthlyTargetDateInput.value) ||
+    monthlyTargetDateInput.value.slice(0, 7) !== mealMonthInput.value ||
+    (dateSelectionMode === "uploaded" && !monthlyUploadedFile);
 }
 
 function isValidMealSheet(value) {
@@ -904,8 +1050,6 @@ function markMealSheetDirty() {
   currentDateStatus = "DRAFT";
   updateSelectedDateStatus("저장되지 않은 변경 사항이 있습니다. 저장하면 검토 전 상태가 됩니다.");
   analysisResults.replaceChildren();
-  analysisDisclaimer.hidden = true;
-  analysisResultsStatus.textContent = "";
   analysisStatus.textContent =
     "저장되지 않은 메뉴 변경 사항이 있습니다. 저장하거나 검토 완료로 저장해 주세요.";
   updateAnalysisControls();
@@ -913,6 +1057,7 @@ function markMealSheetDirty() {
 
 function resetMenuEditor() {
   editingMenuId = null;
+  document.querySelector("#review-editor").open = false;
   menuForm.reset();
   menuMealTypeInput.value = "";
   addMenuButton.textContent = "메뉴 추가";
@@ -949,9 +1094,12 @@ function renderMenuItems() {
     editButton.disabled = isSavingMealSheet || isAnalyzing;
     editButton.addEventListener("click", () => {
       editingMenuId = menu.id;
+      document.querySelector("#review-editor").open = true;
       menuNameInput.value = menu.name;
       menuMealTypeInput.value = menu.mealType || "";
-      menuAllergensInput.value = (menu.allergens || []).join(", ");
+      menuAllergensInput.value = (menu.allergens || [])
+        .map((item) => item.replace(/^범례 확인 필요:\s*/, ""))
+        .join(", ");
       menuInformationComplete.checked =
         menu.isInformationComplete;
       addMenuButton.textContent = "수정 적용";
@@ -987,7 +1135,7 @@ function renderMenuItems() {
       ? "표시 확인 완료"
       : "표시 추가 확인 필요";
     let candidateStatus = null;
-    if (menu.sourceCandidateId) {
+    if (menu.sourceCandidateId && !menu.isInformationComplete) {
       candidateStatus = document.createElement("p");
       candidateStatus.className = "candidate-warnings";
       candidateStatus.textContent =
@@ -1008,6 +1156,30 @@ function renderMenuItems() {
       details,
       ...(candidateStatus ? [candidateStatus] : []),
     );
+    if (menu.allergens === null) {
+      const confirmation = document.createElement("div");
+      confirmation.className = "no-marking-confirmation";
+      const explanation = document.createElement("p");
+      explanation.textContent =
+        "급식표 원본에서 이 메뉴에 알레르기 표시가 없는 것을 확인했나요?";
+      const confirmButton = document.createElement("button");
+      confirmButton.type = "button";
+      confirmButton.className = "button-secondary";
+      confirmButton.textContent = "표시 없음 확인";
+      confirmButton.setAttribute("aria-label", `${menu.name} 알레르기 표시 없음 확인`);
+      confirmButton.disabled = isSavingMealSheet || isAnalyzing;
+      confirmButton.addEventListener("click", () => {
+        menuItems = menuItems.map((item) => item.id === menu.id
+          ? { ...item, allergens: [], isInformationComplete: true }
+          : item);
+        markMealSheetDirty();
+        renderMenuItems();
+        analysisStatus.textContent =
+          `${menu.name}의 표시 없음을 확인했습니다. 검토 완료로 저장하면 비교 결과에 반영됩니다.`;
+      });
+      confirmation.append(explanation, confirmButton);
+      item.append(confirmation);
+    }
     menuList.append(item);
   }
 
@@ -1042,13 +1214,42 @@ function renderAnalysisResults(payload) {
     throw new Error("비교 결과 형식이 올바르지 않습니다.");
   }
 
+  const mayMentionRegisteredAllergy = (evidence) => evidence.some((label) =>
+    savedAllergies.some((allergy) => {
+      const number = allergyNameToNumber.get(allergy);
+      return label.includes(allergy) || Boolean(number && (
+        label.includes(String.fromCharCode(0x2460 + number - 1)) ||
+        new RegExp(`(?<!\\d)${number}(?!\\d)`).test(label)
+      ));
+    }));
   analysisResults.replaceChildren();
+  const attentionResults = payload.results.filter(
+    (result) => result.status === "MATCH" ||
+      (result.status === "CHECK_NEEDED" &&
+        mayMentionRegisteredAllergy(result.evidence)),
+  );
+  const unreadResults = payload.results.filter(
+    (result) => result.status === "CHECK_NEEDED" &&
+      !mayMentionRegisteredAllergy(result.evidence),
+  );
+  const overview = document.createElement("p");
+  overview.className = "result-overview";
+  overview.textContent =
+    `등록 알레르기: ${savedAllergies.join(", ") || "없음"} · 주의 표시 ${attentionResults.filter((result) => result.status === "MATCH").length}개 · 번호 확인 ${attentionResults.filter((result) => result.status === "CHECK_NEEDED").length}개`;
+  analysisResults.append(overview);
+  if (attentionResults.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "result-empty";
+    empty.textContent =
+      "등록한 알레르기와 일치하는 표시가 확인된 메뉴는 없습니다.";
+    analysisResults.append(empty);
+  }
   const list = document.createElement("ul");
   list.className = "result-list";
   const statusLabels = {
-    MATCH: "일치 항목 확인",
+    MATCH: "주의 표시",
     CHECK_NEEDED: "추가 확인 필요",
-    NOT_IDENTIFIED: "일치 표시 미확인",
+    NOT_IDENTIFIED: "표시 항목상 일치 없음",
   };
   const statusClasses = {
     MATCH: "match",
@@ -1056,7 +1257,7 @@ function renderAnalysisResults(payload) {
     NOT_IDENTIFIED: "not-identified",
   };
 
-  for (const result of payload.results) {
+  for (const result of attentionResults) {
     const item = document.createElement("li");
     item.className = "result-item";
     const header = document.createElement("div");
@@ -1068,23 +1269,39 @@ function renderAnalysisResults(payload) {
     status.textContent = statusLabels[result.status];
     header.append(name, status);
 
-    const matches = document.createElement("p");
-    matches.textContent = result.matched_allergens.length
-      ? `일치 항목: ${result.matched_allergens.join(", ")}`
-      : "일치 항목: 없음";
-    const evidence = document.createElement("p");
-    evidence.textContent = result.evidence.length
-      ? `확인한 표시: ${result.evidence.join(", ")}`
-      : "확인한 표시: 없음";
     const reason = document.createElement("p");
-    reason.textContent = result.reason;
-    item.append(header, matches, evidence, reason);
+    reason.textContent = result.status === "MATCH"
+      ? `급식표 표시에 등록한 ${result.matched_allergens.join(", ")} 항목이 있습니다. 원재료와 조리 과정은 담당자에게 확인해 주세요.`
+      : `알레르기 번호를 충분히 읽지 못해 ${savedAllergies.join(", ")} 포함 여부를 확인할 수 없습니다. 원본 급식표를 확인해 주세요.`;
+    item.append(header, reason);
     list.append(item);
   }
 
   analysisResults.append(list);
-  analysisDisclaimer.textContent = payload.disclaimer;
-  analysisDisclaimer.hidden = false;
+  if (unreadResults.length > 0) {
+    const unread = document.createElement("details");
+    unread.className = "result-unread-details";
+    const summary = document.createElement("summary");
+    summary.textContent = `등록 알레르기 여부가 불명확한 메뉴 ${unreadResults.length}개 보기`;
+    const description = document.createElement("p");
+    description.textContent =
+      `${savedAllergies.join(", ")} 표시가 있는지 판단할 정보가 부족합니다. 원본에서 표시가 없는 것을 확인했다면 ‘메뉴 다시 확인’에서 확정할 수 있어요.`;
+    const names = document.createElement("p");
+    names.textContent = unreadResults.map((result) => result.menu_name).join(" · ");
+    unread.append(summary, description, names);
+    analysisResults.append(unread);
+  }
+  contactRequestPanel.hidden = !payload.date || attentionResults.length === 0;
+  if (payload.date && attentionResults.length > 0) {
+    const menuNames = attentionResults
+      .map((result) => result.menu_name)
+      .filter(Boolean);
+    contactRequestText.value =
+      `안녕하세요. ${payload.date} 급식 메뉴 중 ${menuNames.join(", ") || "선택한 메뉴"}에 ` +
+      `아이의 알레르기 항목(${savedAllergies.join(", ")})이 포함되는지, ` +
+      "원재료와 조리 과정까지 확인 부탁드립니다. 감사합니다.";
+    copyContactRequestStatus.textContent = "";
+  }
 }
 
 async function requestJson(path, options) {
@@ -1130,7 +1347,9 @@ function getLocalDateString(date = new Date()) {
 async function loadDateMealSheet(dateValue) {
   selectedDate = dateValue;
   mealDateInput.value = dateValue;
+  dailyUploadDateInput.value = dateValue;
   mealMonthInput.value = dateValue.slice(0, 7);
+  monthlyTargetDateInput.value = dateValue;
   isMealSheetLoaded = false;
   isMealSheetReviewed = false;
   isMealSheetDirty = false;
@@ -1138,8 +1357,6 @@ async function loadDateMealSheet(dateValue) {
   resetMenuEditor();
   renderMenuItems();
   analysisResults.replaceChildren();
-  analysisResultsStatus.textContent = "";
-  analysisDisclaimer.hidden = true;
   resultsHeading.textContent = "알레르기 비교 결과";
   resultsDescription.textContent =
     "선택한 날짜의 검토 완료 메뉴만 비교합니다.";
@@ -1213,7 +1430,9 @@ function renderMonthCalendar(month, sheets) {
       "aria-label",
       `${dateValue}, ${getDateStatusLabel(status)}`,
     );
-    if (dateValue === selectedDate) {
+    if (dateValue === (dateSelectionMode === "uploaded"
+      ? monthlyTargetDateInput.value
+      : selectedDate)) {
       button.setAttribute("aria-current", "date");
     }
     const number = document.createElement("span");
@@ -1224,10 +1443,19 @@ function renderMonthCalendar(month, sheets) {
     label.textContent = getDateStatusLabel(status);
     button.append(number, label);
     button.addEventListener("click", async () => {
+      if (dateSelectionMode === "uploaded") {
+        monthlyTargetDateInput.value = dateValue;
+        for (const dayButton of monthCalendar.querySelectorAll(".calendar-day")) {
+          dayButton.removeAttribute("aria-current");
+        }
+        button.setAttribute("aria-current", "date");
+        updateImageUploadControls();
+        return;
+      }
       if (!confirmDateNavigation()) {
         return;
       }
-      reviewReturnStep = "monthly";
+      reviewReturnStep = "monthlyDate";
       try {
         await loadDateMealSheet(dateValue);
         showStep("review");
@@ -1333,8 +1561,6 @@ async function loadProfile() {
   retryButton.hidden = true;
   saveStatus.textContent = "저장된 정보를 불러오는 중입니다.";
   analysisResults.replaceChildren();
-  analysisDisclaimer.hidden = true;
-  analysisResultsStatus.textContent = "";
   savedSheetAvailability.textContent = "저장 상태 확인 중";
   menuList.replaceChildren();
   menuForm.reset();
@@ -1388,7 +1614,9 @@ async function loadProfile() {
 
   selectedDate = getLocalDateString();
   mealDateInput.value = selectedDate;
+  dailyUploadDateInput.value = selectedDate;
   mealMonthInput.value = selectedDate.slice(0, 7);
+  monthlyTargetDateInput.value = selectedDate;
   try {
     await loadDateMealSheet(selectedDate);
     await loadUnassignedLegacyMealSheet();
@@ -1434,6 +1662,9 @@ form.addEventListener("submit", async (event) => {
 
     savedAllergies = allergies;
     resultMessage = "저장했습니다. 새로고침 후에도 선택 내용이 유지됩니다.";
+    if (allergies.length > 0) {
+      showStep("type");
+    }
   } catch (error) {
     resultMessage = error instanceof TypeError
       ? "API 서버에 연결할 수 없어 저장하지 못했습니다."
@@ -1534,6 +1765,7 @@ async function saveMealSheet(status) {
       .map((menu) => menu.sourceCandidateId)
       .filter(Boolean);
   isSavingMealSheet = true;
+  let shouldAnalyzeAfterSave = false;
   analysisStatus.textContent = {
     DRAFT: "급식표 초안을 저장하고 있습니다.",
     REVIEWED: "검토 완료한 급식표를 저장하고 있습니다.",
@@ -1603,6 +1835,7 @@ async function saveMealSheet(status) {
     }[savedSheet.status];
     updateSelectedDateStatus();
     await loadMonthCalendar(mealMonthInput.value);
+    shouldAnalyzeAfterSave = savedSheet.status === "REVIEWED";
   } catch (error) {
     analysisStatus.textContent = error instanceof TypeError
       ? "급식표 API에 연결할 수 없어 저장하지 못했습니다."
@@ -1610,6 +1843,9 @@ async function saveMealSheet(status) {
   } finally {
     isSavingMealSheet = false;
     renderMenuItems();
+    if (shouldAnalyzeAfterSave) {
+      analyzeDateButton.click();
+    }
   }
 }
 
@@ -1662,7 +1898,6 @@ analyzeLegacyButton.addEventListener("click", async () => {
   isAnalyzing = true;
   analysisStatus.textContent = "날짜 미지정 이전 급식표를 기존 방식으로 비교하고 있습니다.";
   analysisResults.replaceChildren();
-  analysisDisclaimer.hidden = true;
   updateAnalysisControls();
 
   try {
@@ -1673,10 +1908,9 @@ analyzeLegacyButton.addEventListener("click", async () => {
     renderAnalysisResults(payload);
     resultsHeading.textContent = "날짜 미지정 급식표의 기존 비교";
     resultsDescription.textContent =
-      "날짜가 배정되지 않은 기존 정보에 대한 비교 결과이며, 선택 날짜의 비교가 아닙니다.";
+      `메뉴 ${payload.results.length}개를 비교했습니다. 등록 알레르기와 관련된 결과를 표시합니다.`;
     analysisStatus.textContent =
-      `날짜 미지정 메뉴 ${payload.results.length}개의 기존 비교 결과입니다.`;
-    analysisResultsStatus.textContent = analysisStatus.textContent;
+      `메뉴 ${payload.results.length}개를 비교했습니다. 등록 알레르기와 관련된 결과를 표시합니다.`;
     showStep("results");
   } catch (error) {
     analysisStatus.textContent = error instanceof TypeError
@@ -1714,8 +1948,6 @@ analyzeDateButton.addEventListener("click", async () => {
   analysisStatus.textContent =
     `${requestedDate}의 검토 완료 메뉴를 비교하고 있습니다.`;
   analysisResults.replaceChildren();
-  analysisResultsStatus.textContent = "";
-  analysisDisclaimer.hidden = true;
   updateAnalysisControls();
 
   try {
@@ -1733,10 +1965,9 @@ analyzeDateButton.addEventListener("click", async () => {
     renderAnalysisResults(payload);
     resultsHeading.textContent = `${requestedDate} 알레르기 비교 결과`;
     resultsDescription.textContent =
-      `${requestedDate}에 검토 완료로 저장한 하루치 전체 메뉴의 비교 결과입니다.`;
+      `${requestedDate} · 메뉴 ${payload.results.length}개를 비교했습니다. 등록 알레르기와 관련된 결과를 표시합니다.`;
     analysisStatus.textContent =
-      `${requestedDate} · 메뉴 ${payload.results.length}개의 비교 결과입니다.`;
-    analysisResultsStatus.textContent = analysisStatus.textContent;
+      `${requestedDate} · 메뉴 ${payload.results.length}개를 비교했습니다. 등록 알레르기와 관련된 결과를 표시합니다.`;
     showStep("results");
   } catch (error) {
     if (selectedDate !== requestedDate) {
@@ -1776,30 +2007,80 @@ document.querySelector("#profile-home-button").addEventListener("click", () => {
   showStep("home");
 });
 document.querySelector("#profile-next-button").addEventListener("click", () => {
+  if (profileNextButton.disabled) {
+    saveStatus.textContent = "알레르기 항목을 저장한 뒤 급식표를 확인해 주세요.";
+    return;
+  }
   showStep("type");
 });
 document.querySelector("#type-back-button").addEventListener("click", () => {
   showStep("profile");
 });
 document.querySelector("#choose-daily-button").addEventListener("click", () => {
-  reviewReturnStep = "type";
-  setMealSheetMode();
-  showStep("review");
+  dailyUploadDateInput.value = selectedDate || getLocalDateString();
+  showStep("dailyUpload");
 });
 document.querySelector("#choose-monthly-button").addEventListener("click", () => {
-  mealMonthInput.value = selectedDate
-    ? selectedDate.slice(0, 7)
-    : getLocalDateString().slice(0, 7);
-  loadMonthCalendar(mealMonthInput.value);
+  const targetDate = selectedDate || getLocalDateString();
+  monthlyTargetDateInput.value = targetDate;
+  mealMonthInput.value = targetDate.slice(0, 7);
   showStep("monthly");
 });
 document.querySelector("#choose-saved-button").addEventListener("click", () => {
+  dateSelectionMode = "saved";
   mealMonthInput.value = selectedDate.slice(0, 7);
+  monthlyTargetDateInput.value = selectedDate;
+  document.querySelector("#view-monthly-results-button").textContent =
+    "저장된 급식표 보기";
+  document.querySelector("#monthly-date-back-button").textContent =
+    "← 유형 다시 선택";
   loadMonthCalendar(mealMonthInput.value);
-  showStep("monthly");
+  updateImageUploadControls();
+  showStep("monthlyDate");
+});
+document.querySelector("#daily-upload-back-button").addEventListener("click", () => {
+  showStep("type");
+});
+document.querySelector("#daily-manual-button").addEventListener("click", async () => {
+  const dateValue = dailyUploadDateInput.value;
+  if (!isValidIsoDate(dateValue) || !confirmDateNavigation()) {
+    dailyExtractionStatus.textContent = "급식 날짜를 확인해 주세요.";
+    return;
+  }
+  try {
+    await loadDateMealSheet(dateValue);
+    reviewReturnStep = "dailyUpload";
+    showStep("review");
+  } catch (error) {
+    dailyExtractionStatus.textContent = `날짜 정보를 불러오지 못했습니다. ${error.message}`;
+  }
 });
 document.querySelector("#monthly-back-button").addEventListener("click", () => {
   showStep("type");
+});
+document.querySelector("#monthly-date-back-button").addEventListener("click", () => {
+  showStep(dateSelectionMode === "saved" ? "type" : "monthly");
+});
+document.querySelector("#view-monthly-results-button").addEventListener("click", async () => {
+  const dateValue = monthlyTargetDateInput.value;
+  if (!isValidIsoDate(dateValue)) {
+    monthlyExtractionStatus.textContent = "날짜를 선택해 주세요.";
+    return;
+  }
+  if (dateSelectionMode === "uploaded") {
+    await extractMealImage("monthly");
+    return;
+  }
+  if (!confirmDateNavigation()) {
+    return;
+  }
+  try {
+    await loadDateMealSheet(dateValue);
+    reviewReturnStep = "monthlyDate";
+    showStep("review");
+  } catch (error) {
+    monthlyExtractionStatus.textContent = `날짜 정보를 불러오지 못했습니다. ${error.message}`;
+  }
 });
 document.querySelector("#review-back-button").addEventListener("click", () => {
   showStep(reviewReturnStep);
@@ -1813,6 +2094,15 @@ document.querySelector("#result-edit-button-bottom").addEventListener("click", (
 document.querySelector("#result-profile-button").addEventListener("click", () => {
   showStep("profile");
 });
+document.querySelector("#copy-contact-request-button").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(contactRequestText.value);
+    copyContactRequestStatus.textContent = "문의 문장을 복사했습니다.";
+  } catch (error) {
+    copyContactRequestStatus.textContent =
+      "복사하지 못했습니다. 문장을 직접 선택해 복사해 주세요.";
+  }
+});
 mealDateInput.addEventListener("change", async () => {
   const nextDate = mealDateInput.value;
   if (!nextDate) {
@@ -1823,7 +2113,6 @@ mealDateInput.addEventListener("change", async () => {
     mealDateInput.value = selectedDate;
     return;
   }
-  reviewReturnStep = "type";
   try {
     await loadDateMealSheet(nextDate);
     await loadMonthCalendar(mealMonthInput.value);
@@ -1833,19 +2122,65 @@ mealDateInput.addEventListener("change", async () => {
   }
 });
 mealMonthInput.addEventListener("change", () => {
+  if (
+    monthlyTargetDateInput.value &&
+    monthlyTargetDateInput.value.slice(0, 7) !== mealMonthInput.value
+  ) {
+    monthlyTargetDateInput.value = "";
+  }
   loadMonthCalendar(mealMonthInput.value);
   updateImageUploadControls();
 });
 
-dailyImageInput.addEventListener("change", updateImageUploadControls);
-monthlyImageInput.addEventListener("change", updateImageUploadControls);
+monthlyTargetDateInput.addEventListener("change", () => {
+  if (isValidIsoDate(monthlyTargetDateInput.value)) {
+    mealMonthInput.value = monthlyTargetDateInput.value.slice(0, 7);
+    loadMonthCalendar(mealMonthInput.value);
+  }
+  updateImageUploadControls();
+});
+
+dailyImageInput.addEventListener("change", () => {
+  const file = dailyImageInput.files && dailyImageInput.files[0];
+  dailyExtractionStatus.textContent = file
+    ? `선택한 이미지: ${file.name}`
+    : "이미지를 선택해 주세요.";
+  updateImageUploadControls();
+});
+monthlyImageInput.addEventListener("change", () => {
+  const file = monthlyImageInput.files && monthlyImageInput.files[0];
+  document.querySelector("#monthly-upload-file-status").textContent = file
+    ? `선택한 이미지: ${file.name}`
+    : "이미지를 선택해 주세요.";
+  updateImageUploadControls();
+});
 dailyImageForm.addEventListener("submit", (event) => {
   event.preventDefault();
   extractMealImage("daily");
 });
 monthlyImageForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  extractMealImage("monthly");
+  const file = monthlyImageInput.files && monthlyImageInput.files[0];
+  if (!file) {
+    return;
+  }
+  if (file.size === 0 || file.size > 10 * 1024 * 1024) {
+    document.querySelector("#monthly-upload-file-status").textContent =
+      file.size === 0 ? "빈 이미지 파일은 업로드할 수 없습니다." : "이미지 크기는 10MB 이하여야 합니다.";
+    return;
+  }
+  monthlyUploadedFile = file;
+  dateSelectionMode = "uploaded";
+  extractionDrafts.monthly = null;
+  renderExtractionResults("monthly");
+  monthlyExtractionStatus.textContent = "날짜를 선택해 인식 결과를 확인해 주세요.";
+  document.querySelector("#view-monthly-results-button").textContent =
+    "급식표 인식 결과 보기";
+  document.querySelector("#monthly-date-back-button").textContent =
+    "← 급식표 업로드";
+  loadMonthCalendar(mealMonthInput.value);
+  updateImageUploadControls();
+  showStep("monthlyDate");
 });
 
 retryButton.addEventListener("click", loadProfile);
