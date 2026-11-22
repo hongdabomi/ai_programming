@@ -33,7 +33,9 @@ F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날�
 │   ├── requirements.txt
 │   └── requirements-dev.txt
 ├── frontend/
-│   └── index.html
+│   ├── index.html
+│   ├── style.css
+│   └── script.js
 ├── backend/data/profile.json  # 실행 후 생성되는 로컬 데이터 (Git 제외)
 ├── backend/data/meal_sheet.json  # 기존 날짜 미지정 급식표 (Git 제외)
 ├── backend/data/meal_sheets.json  # 날짜별 급식표 JSON (Git 제외)
