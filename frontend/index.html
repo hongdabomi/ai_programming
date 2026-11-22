@@ -117,7 +117,7 @@
             <span class="step-icon" aria-hidden="true">🗓️</span>
             <span class="badge">날짜별 저장 사용 가능</span>
             <h2 style="margin-top: 0.75rem">한 달 급식표</h2>
-            <p>달력에서 날짜별 상태를 확인하고 메뉴를 입력·수정할 수 있어요. 이미지 인식은 아직 지원하지 않아요.</p>
+            <p>달력에서 저장 상태를 확인하고, 한 달 이미지에서 날짜별 메뉴 후보를 추출해 검토할 수 있어요.</p>
             <button class="button-secondary" type="button" id="choose-monthly-button">날짜별 달력 열기</button>
           </article>
           <article class="type-card">
@@ -129,8 +129,8 @@
           </article>
         </div>
         <aside class="notice" style="margin-top: 1.2rem">
-          <strong>이미지 업로드·자동 인식은 아직 준비 중이에요</strong>
-          <p>현재는 메뉴명과 급식표 알레르기 표시를 직접 입력하는 방식만 사용할 수 있습니다.</p>
+          <strong>AI 추출은 후보 정보예요</strong>
+          <p>날짜, 메뉴명, 알레르기 표시를 직접 검토하고 저장하기 전에는 비교나 기존 데이터에 반영되지 않습니다.</p>
         </aside>
       </section>
 
@@ -143,7 +143,31 @@
           <label class="form-field" for="meal-month-input">조회할 월
             <input id="meal-month-input" type="month" aria-describedby="monthly-help">
           </label>
-          <p id="monthly-help" class="help-text">각 날짜를 선택해 하루치 메뉴를 입력하거나 저장된 정보를 수정하세요. 메뉴는 선택한 날짜 하나에만 저장됩니다.</p>
+          <p id="monthly-help" class="help-text">각 날짜를 선택해 메뉴를 입력하거나 저장된 정보를 수정하세요. 이미지에서 날짜를 확인하지 못한 메뉴는 날짜를 지정하기 전까지 미지정 후보로 남습니다.</p>
+          <form id="monthly-image-form" class="image-upload-form">
+            <fieldset id="monthly-image-fieldset" disabled>
+              <legend>한 달 급식표 이미지 추출</legend>
+              <label class="form-field" for="monthly-image-input">
+                급식표 이미지 (JPG, JPEG, PNG)
+                <input
+                  id="monthly-image-input"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                >
+              </label>
+              <p class="help-text">최대 10MB. 추출 결과는 날짜별 후보이며 저장된 급식표를 자동으로 변경하지 않습니다.</p>
+            </fieldset>
+            <div class="actions">
+              <button class="button-primary" id="extract-monthly-button" type="submit" disabled>한 달 이미지에서 후보 추출</button>
+            </div>
+            <p id="monthly-extraction-status" role="status" aria-live="polite">이미지를 선택해 주세요.</p>
+            <div id="monthly-extraction-progress" class="extraction-progress" role="status" aria-live="polite" hidden>
+              <span class="extraction-spinner" aria-hidden="true"></span>
+              <strong>급식표를 분석하고 있어요</strong>
+              <p>AI가 날짜, 메뉴와 알레르기 표시를 확인하고 있어요.</p>
+            </div>
+          </form>
+          <section id="monthly-extraction-results" class="extraction-results" aria-live="polite" hidden></section>
           <div id="month-calendar" class="month-calendar" aria-label="월별 급식표 상태"></div>
           <p id="month-status" role="status" aria-live="polite"></p>
         </section>
@@ -164,10 +188,30 @@
             <span id="selected-date-badge" class="badge">정보 없음</span>
             <p id="selected-date-status" role="status" aria-live="polite"></p>
           </div>
-          <div class="upload-placeholder">
-            <span class="step-icon" aria-hidden="true">🖼️</span>
-            <div><strong>급식표 이미지 자동 인식 · 준비 중</strong><p>Gemini 추출은 아직 제공되지 않아요. 이미지를 처리한 것처럼 표시하지 않으며, 아래에서 메뉴를 직접 입력할 수 있어요.</p></div>
-          </div>
+          <form id="daily-image-form" class="image-upload-form">
+            <fieldset id="daily-image-fieldset" disabled>
+              <legend>하루 급식표 이미지 후보 추출</legend>
+              <label class="form-field" for="daily-image-input">
+                급식표 이미지 (JPG, JPEG, PNG)
+                <input
+                  id="daily-image-input"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                >
+              </label>
+              <p class="help-text">하루치 이미지의 모든 메뉴를 후보로 읽습니다. 날짜를 이미지에서 확인하지 못하면 직접 지정해야 합니다. 최대 10MB.</p>
+            </fieldset>
+            <div class="actions">
+              <button class="button-primary" id="extract-daily-button" type="submit" disabled>하루 이미지에서 후보 추출</button>
+            </div>
+            <p id="daily-extraction-status" role="status" aria-live="polite">이미지를 선택해 주세요.</p>
+            <div id="daily-extraction-progress" class="extraction-progress" role="status" aria-live="polite" hidden>
+              <span class="extraction-spinner" aria-hidden="true"></span>
+              <strong>급식표를 분석하고 있어요</strong>
+              <p>AI가 날짜, 메뉴와 알레르기 표시를 확인하고 있어요.</p>
+            </div>
+          </form>
+          <section id="daily-extraction-results" class="extraction-results" aria-live="polite" hidden></section>
 
           <form id="menu-form">
             <fieldset id="menu-entry-fieldset" disabled>

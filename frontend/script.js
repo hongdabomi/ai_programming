@@ -1,4 +1,5 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
+const IMAGE_EXTRACTION_TIMEOUT_MS = 120_000;
 const form = document.querySelector("#profile-form");
 const fieldset = document.querySelector("#allergy-fieldset");
 const optionsContainer = document.querySelector("#allergy-options");
@@ -31,6 +32,28 @@ const menuList = document.querySelector("#menu-list");
 const analysisStatus = document.querySelector("#analysis-status");
 const mealDateInput = document.querySelector("#meal-date-input");
 const mealMonthInput = document.querySelector("#meal-month-input");
+const dailyImageForm = document.querySelector("#daily-image-form");
+const dailyImageFieldset = document.querySelector("#daily-image-fieldset");
+const dailyImageInput = document.querySelector("#daily-image-input");
+const extractDailyButton = document.querySelector("#extract-daily-button");
+const dailyExtractionStatus = document.querySelector("#daily-extraction-status");
+const dailyExtractionProgress = document.querySelector(
+  "#daily-extraction-progress",
+);
+const dailyExtractionResults = document.querySelector("#daily-extraction-results");
+const monthlyImageForm = document.querySelector("#monthly-image-form");
+const monthlyImageFieldset = document.querySelector("#monthly-image-fieldset");
+const monthlyImageInput = document.querySelector("#monthly-image-input");
+const extractMonthlyButton = document.querySelector("#extract-monthly-button");
+const monthlyExtractionStatus = document.querySelector(
+  "#monthly-extraction-status",
+);
+const monthlyExtractionProgress = document.querySelector(
+  "#monthly-extraction-progress",
+);
+const monthlyExtractionResults = document.querySelector(
+  "#monthly-extraction-results",
+);
 const monthCalendar = document.querySelector("#month-calendar");
 const monthStatus = document.querySelector("#month-status");
 const selectedDateBadge = document.querySelector("#selected-date-badge");
@@ -67,10 +90,13 @@ let isSavingMealSheet = false;
 let isLoaded = false;
 let isSaving = false;
 let isAnalyzing = false;
+let isExtractingImage = false;
 let selectedDate = "";
 let currentDateStatus = "NO_DATA";
 let legacyMealSheet = null;
 let reviewReturnStep = "type";
+let extractionDrafts = { daily: null, monthly: null };
+const savedExtractionCandidateIds = new Set();
 
 function showStep(step) {
   for (const [name, screen] of Object.entries(screens)) {
@@ -205,6 +231,403 @@ function renderAllergenTags(container, allergens) {
   }
 }
 
+function isValidIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value;
+}
+
+function isValidImageExtraction(value, scope) {
+  const validMealTypes = new Set([
+    "morning_snack",
+    "lunch",
+    "afternoon_snack",
+  ]);
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    value.source === "uploaded-image" &&
+    value.reviewed === false &&
+    value.scope === scope &&
+    (value.reference_date === null ||
+      isValidIsoDate(value.reference_date)) &&
+    (value.reference_month === null ||
+      /^\d{4}-(0[1-9]|1[0-2])$/.test(value.reference_month)) &&
+    ["NO_LEGEND", "VERIFIED", "NEEDS_CONFIRMATION"].includes(
+      value.legend_status,
+    ) &&
+    Array.isArray(value.legend_warnings) &&
+    value.legend_warnings.every((warning) => typeof warning === "string") &&
+    Array.isArray(value.menus) &&
+    value.menus.every(
+      (menu) =>
+        menu &&
+        typeof menu.id === "string" &&
+        typeof menu.name === "string" &&
+        (menu.date === null || isValidIsoDate(menu.date)) &&
+        (menu.date_text === null || typeof menu.date_text === "string") &&
+        typeof menu.date_requires_confirmation === "boolean" &&
+        (menu.meal_type === null || validMealTypes.has(menu.meal_type)) &&
+        (menu.allergen_marking === null ||
+          typeof menu.allergen_marking === "string") &&
+        Array.isArray(menu.allergen_numbers) &&
+        menu.allergen_numbers.every(Number.isInteger) &&
+        (menu.allergens === null ||
+          (Array.isArray(menu.allergens) &&
+            menu.allergens.every((item) => typeof item === "string"))) &&
+        Array.isArray(menu.warnings) &&
+        menu.warnings.every((warning) => typeof warning === "string") &&
+        menu.is_information_complete === false,
+    ) &&
+    new Set(value.menus.map((menu) => menu.id)).size === value.menus.length
+  );
+}
+
+function renderExtractionResults(scope) {
+  const draft = extractionDrafts[scope];
+  const container = scope === "daily"
+    ? dailyExtractionResults
+    : monthlyExtractionResults;
+  container.replaceChildren();
+  container.hidden = !draft;
+  if (!draft) {
+    return;
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "notice";
+  const summaryTitle = document.createElement("strong");
+  summaryTitle.textContent = "Gemini가 추출한 검토 후보";
+  const summaryText = document.createElement("p");
+  summaryText.textContent =
+    "후보는 저장되거나 비교에 사용되지 않았습니다. 날짜와 각 표시를 확인한 뒤 메뉴별로 검토 화면에 가져오세요.";
+  summary.append(summaryTitle, summaryText);
+  if (draft.legend_warnings.length) {
+    const warnings = document.createElement("ul");
+    for (const warning of draft.legend_warnings) {
+      const item = document.createElement("li");
+      item.textContent = warning;
+      warnings.append(item);
+    }
+    summary.append(warnings);
+  } else if (draft.legend_status === "VERIFIED") {
+    const verifiedLegend = document.createElement("p");
+    verifiedLegend.textContent =
+      "이미지 범례와 프로젝트 대응표가 일치한 번호만 항목명으로 표시했습니다. 사용자 확인은 계속 필요합니다.";
+    summary.append(verifiedLegend);
+  }
+  container.append(summary);
+
+  if (draft.menus.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "help-text";
+    empty.textContent =
+      "읽을 수 있는 메뉴 후보가 없습니다. 저장된 메뉴는 변경되지 않았으며 직접 입력할 수 있습니다.";
+    container.append(empty);
+    return;
+  }
+
+  const datedGroup = document.createElement("section");
+  datedGroup.className = "extraction-group";
+  const datedHeading = document.createElement("h3");
+  datedHeading.textContent = "이미지에서 날짜를 인식한 메뉴";
+  const datedCards = document.createElement("div");
+  datedCards.className = "extraction-group";
+  datedGroup.append(datedHeading, datedCards);
+
+  const unassignedGroup = document.createElement("section");
+  unassignedGroup.className = "extraction-group";
+  const unassignedHeading = document.createElement("h3");
+  unassignedHeading.textContent = "날짜 미지정 후보";
+  const unassignedCards = document.createElement("div");
+  unassignedCards.className = "extraction-group";
+  unassignedGroup.append(unassignedHeading, unassignedCards);
+
+  for (const menu of draft.menus) {
+    const card = document.createElement("article");
+    card.className = "image-extraction-candidate";
+
+    const header = document.createElement("div");
+    header.className = "menu-item-header";
+    const name = document.createElement("strong");
+    name.textContent = menu.name || "읽기 어려운 메뉴명";
+    const status = document.createElement("span");
+    status.className = "badge";
+    status.textContent = "AI 후보 · 직접 확인 필요";
+    header.append(name, status);
+
+    const sourceDate = document.createElement("p");
+    sourceDate.className = "candidate-source";
+    sourceDate.textContent = menu.date_text
+      ? `이미지 날짜 표기: ${menu.date_text}`
+      : "이미지에서 메뉴 날짜를 확인하지 못했습니다.";
+    const sourceMarking = document.createElement("p");
+    sourceMarking.className = "candidate-source";
+    sourceMarking.textContent = menu.allergen_marking
+      ? `이미지 알레르기 표시: ${menu.allergen_marking}`
+      : "이미지에서 알레르기 표시를 읽지 못했습니다. 표시가 없다고 단정하지 마세요.";
+
+    const mappedNumbers = document.createElement("p");
+    mappedNumbers.className = "candidate-source";
+    mappedNumbers.textContent = menu.allergen_numbers.length
+      ? `번호 대응 후보: ${menu.allergen_numbers.map((number) =>
+        `${number}. ${allergyNumberToName.get(number) || "확인 필요"}`
+      ).join(" · ")}`
+      : "번호 대응 후보가 없습니다.";
+
+    const tags = document.createElement("div");
+    renderAllergenTags(tags, menu.allergens);
+
+    const warnings = document.createElement("ul");
+    warnings.className = "candidate-warnings";
+    for (const warning of menu.warnings) {
+      const item = document.createElement("li");
+      item.textContent = warning;
+      warnings.append(item);
+    }
+
+    const dateLabel = document.createElement("label");
+    dateLabel.className = "form-field";
+    dateLabel.textContent = "저장할 날짜 선택 (이미지 날짜는 후보)";
+    const dateInput = document.createElement("input");
+    dateInput.type = "date";
+    dateInput.value = menu.assignedDate;
+    dateLabel.append(dateInput);
+
+    if (
+      menu.date &&
+      ((draft.scope === "daily" &&
+        draft.reference_date &&
+        menu.date !== draft.reference_date) ||
+        (draft.scope === "monthly" &&
+          draft.reference_month &&
+          menu.date.slice(0, 7) !== draft.reference_month))
+    ) {
+      const mismatch = document.createElement("p");
+      mismatch.className = "candidate-warnings";
+      mismatch.textContent =
+        "선택한 날짜/월과 이미지에서 읽은 날짜가 다릅니다. 저장 날짜를 확인해 주세요.";
+      card.append(mismatch);
+    } else if (!menu.date) {
+      const unassigned = document.createElement("p");
+      unassigned.className = "candidate-warnings";
+      unassigned.textContent =
+        "날짜 미지정 상태입니다. 직접 날짜를 선택해야 저장할 수 있습니다.";
+      card.append(unassigned);
+    }
+
+    const importButton = document.createElement("button");
+    importButton.className = "button-secondary";
+    importButton.type = "button";
+    const isInEditor = menuItems.some(
+      (item) => item.sourceCandidateId === menu.id,
+    );
+    const alreadySaved = savedExtractionCandidateIds.has(menu.id);
+    importButton.textContent = alreadySaved
+      ? "저장 완료"
+      : isInEditor
+        ? "검토 화면에 있음"
+        : "이 메뉴를 검토 화면에 가져오기";
+    importButton.disabled =
+      !isValidIsoDate(menu.assignedDate) ||
+      isInEditor ||
+      alreadySaved ||
+      isExtractingImage;
+    dateInput.disabled = isInEditor || alreadySaved || isExtractingImage;
+    dateInput.addEventListener("change", () => {
+      menu.assignedDate = dateInput.value;
+      importButton.disabled =
+        !isValidIsoDate(menu.assignedDate) ||
+        isInEditor ||
+        alreadySaved ||
+        isExtractingImage;
+    });
+    importButton.addEventListener("click", () => {
+      importExtractedCandidate(scope, menu.id);
+    });
+
+    card.append(
+      header,
+      sourceDate,
+      sourceMarking,
+      mappedNumbers,
+      tags,
+      warnings,
+      dateLabel,
+      importButton,
+    );
+    (menu.date ? datedCards : unassignedCards).append(card);
+  }
+
+  if (datedCards.childElementCount) {
+    container.append(datedGroup);
+  }
+  if (unassignedCards.childElementCount) {
+    container.append(unassignedGroup);
+  }
+}
+
+async function extractMealImage(scope) {
+  const isDaily = scope === "daily";
+  const input = isDaily ? dailyImageInput : monthlyImageInput;
+  const status = isDaily ? dailyExtractionStatus : monthlyExtractionStatus;
+  const progress = isDaily
+    ? dailyExtractionProgress
+    : monthlyExtractionProgress;
+  const file = input.files && input.files[0];
+  if (!file || isExtractingImage) {
+    return;
+  }
+  if (file.size === 0) {
+    status.textContent = "빈 이미지 파일은 처리할 수 없습니다.";
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    status.textContent = "이미지 파일은 10MB 이하로 업로드해 주세요.";
+    return;
+  }
+
+  const existingDraft = extractionDrafts[scope];
+  const hasUnreviewedCandidates = existingDraft &&
+    existingDraft.menus.some(
+      (menu) =>
+        !savedExtractionCandidateIds.has(menu.id) &&
+        !menuItems.some((item) => item.sourceCandidateId === menu.id),
+    );
+  if (
+    hasUnreviewedCandidates &&
+    !window.confirm("아직 검토하지 않은 후보를 새 이미지 결과로 바꿀까요?")
+  ) {
+    status.textContent =
+      "기존 이미지 후보를 유지했습니다. 저장된 급식표는 변경되지 않았습니다.";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("image", file);
+  formData.append("scope", scope);
+  if (isDaily) {
+    if (!isValidIsoDate(selectedDate)) {
+      status.textContent = "하루치 이미지의 참고 날짜를 먼저 선택해 주세요.";
+      return;
+    }
+    formData.append("reference_date", selectedDate);
+  } else {
+    if (!mealMonthInput.value) {
+      status.textContent = "월간 급식표를 조회할 월을 먼저 선택해 주세요.";
+      return;
+    }
+    formData.append("reference_month", mealMonthInput.value);
+  }
+
+  isExtractingImage = true;
+  let timedOut = false;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, IMAGE_EXTRACTION_TIMEOUT_MS);
+  status.textContent = "";
+  progress.hidden = false;
+  updateAnalysisControls();
+  renderExtractionResults(scope);
+  try {
+    const payload = await requestJson("/api/meal-sheets/extract", {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    if (!isValidImageExtraction(payload, scope)) {
+      throw new Error("이미지 추출 응답 형식을 확인할 수 없습니다.");
+    }
+
+    extractionDrafts[scope] = {
+      ...payload,
+      menus: payload.menus.map((menu) => ({
+        ...menu,
+        assignedDate: menu.date || "",
+      })),
+    };
+    input.value = "";
+    renderExtractionResults(scope);
+    status.textContent = payload.menus.length
+      ? `${payload.menus.length}개 후보를 추출했습니다. 아직 저장하지 않았으며 날짜와 표시를 직접 검토해 주세요.`
+      : "읽을 수 있는 메뉴 후보가 없습니다. 저장된 메뉴는 변경되지 않았습니다.";
+  } catch (error) {
+    if (timedOut || error.name === "AbortError") {
+      status.textContent =
+        "이미지 분석 시간이 초과되어 요청을 종료했습니다. 이미지를 확인한 뒤 다시 시도해 주세요. 기존 저장 데이터는 변경되지 않았습니다.";
+    } else if (error instanceof TypeError) {
+      status.textContent =
+        "API 서버에 연결할 수 없어 이미지를 처리하지 못했습니다. 기존 저장 데이터는 변경되지 않았습니다. 다시 시도해 주세요.";
+    } else {
+      status.textContent =
+        `이미지 추출에 실패했습니다. ${error.message} 이미지를 확인한 뒤 다시 시도해 주세요. 기존 저장 데이터는 변경되지 않았습니다.`;
+    }
+  } finally {
+    window.clearTimeout(timeoutId);
+    progress.hidden = true;
+    isExtractingImage = false;
+    updateAnalysisControls();
+    renderExtractionResults(scope);
+  }
+}
+
+async function importExtractedCandidate(scope, candidateId) {
+  if (isExtractingImage) {
+    return;
+  }
+  const draft = extractionDrafts[scope];
+  const candidateMenu = draft?.menus.find((menu) => menu.id === candidateId);
+  if (!candidateMenu || !isValidIsoDate(candidateMenu.assignedDate)) {
+    const status = scope === "daily"
+      ? dailyExtractionStatus
+      : monthlyExtractionStatus;
+    status.textContent =
+      "날짜가 지정되지 않았습니다. 저장할 날짜를 선택한 뒤 가져와 주세요.";
+    return;
+  }
+  if (
+    savedExtractionCandidateIds.has(candidateId) ||
+    menuItems.some((menu) => menu.sourceCandidateId === candidateId)
+  ) {
+    return;
+  }
+
+  if (selectedDate !== candidateMenu.assignedDate) {
+    if (!confirmDateNavigation()) {
+      return;
+    }
+    try {
+      await loadDateMealSheet(candidateMenu.assignedDate);
+      await loadMonthCalendar(candidateMenu.assignedDate.slice(0, 7));
+    } catch (error) {
+      analysisStatus.textContent =
+        `선택한 날짜를 불러오지 못했습니다. ${error.message} 저장된 내용은 변경되지 않았습니다.`;
+      return;
+    }
+  }
+
+  menuItems.push({
+    id: candidateMenu.id,
+    name: candidateMenu.name,
+    allergens: candidateMenu.allergens,
+    isInformationComplete: false,
+    mealType: candidateMenu.meal_type,
+    sourceCandidateId: candidateMenu.id,
+  });
+  markMealSheetDirty();
+  renderMenuItems();
+  renderExtractionResults(scope);
+  reviewReturnStep = scope === "monthly" ? "monthly" : "type";
+  analysisStatus.textContent =
+    "AI 후보를 검토 목록에 가져왔습니다. 메뉴명과 알레르기 표시를 수정하고 사용자가 확인한 뒤 저장해 주세요.";
+  showStep("review");
+}
+
 function getSelectedAllergies() {
   return Array.from(
     optionsContainer.querySelectorAll('input[type="checkbox"]:checked'),
@@ -291,17 +714,20 @@ function updateAnalysisControls() {
     !isLoaded ||
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     !menuNameInput.value.trim();
   saveMealSheetButton.disabled =
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     !isMealSheetDirty ||
     editingMenuId !== null;
   confirmMealSheetButton.disabled =
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     !canConfirmMealSheet ||
     (isMealSheetReviewed && !isMealSheetDirty) ||
@@ -309,6 +735,7 @@ function updateAnalysisControls() {
   noMealButton.disabled =
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     editingMenuId !== null;
   analyzeDateButton.disabled =
@@ -317,6 +744,7 @@ function updateAnalysisControls() {
     currentDateStatus !== "REVIEWED" ||
     !isMealSheetReviewed ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     isMealSheetDirty ||
     editingMenuId !== null ||
@@ -325,6 +753,7 @@ function updateAnalysisControls() {
   analyzeLegacyButton.disabled =
     !isLoaded ||
     isAnalyzing ||
+    isExtractingImage ||
     isSavingMealSheet ||
     !legacyMealSheet ||
     !legacyMealSheet.reviewed ||
@@ -334,7 +763,28 @@ function updateAnalysisControls() {
     !isLoaded ||
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing;
+  updateImageUploadControls();
+}
+
+function updateImageUploadControls() {
+  const imageRequestBusy = isExtractingImage || isSavingMealSheet || isAnalyzing;
+  dailyImageFieldset.disabled =
+    !isLoaded ||
+    !isMealSheetLoaded ||
+    imageRequestBusy ||
+    editingMenuId !== null;
+  extractDailyButton.disabled =
+    dailyImageFieldset.disabled ||
+    !dailyImageInput.files ||
+    dailyImageInput.files.length === 0;
+  monthlyImageFieldset.disabled = !isLoaded || imageRequestBusy;
+  extractMonthlyButton.disabled =
+    monthlyImageFieldset.disabled ||
+    !monthlyImageInput.files ||
+    monthlyImageInput.files.length === 0 ||
+    !mealMonthInput.value;
 }
 
 function isValidMealSheet(value) {
@@ -536,6 +986,13 @@ function renderMenuItems() {
     details.textContent = menu.isInformationComplete
       ? "표시 확인 완료"
       : "표시 추가 확인 필요";
+    let candidateStatus = null;
+    if (menu.sourceCandidateId) {
+      candidateStatus = document.createElement("p");
+      candidateStatus.className = "candidate-warnings";
+      candidateStatus.textContent =
+        "AI 추출 후보입니다. 메뉴명과 표시를 직접 확인한 뒤 저장해 주세요.";
+    }
     const mealType = document.createElement("span");
     mealType.className = "meal-type-label";
     mealType.textContent = `식사 구분 · ${{
@@ -543,11 +1000,20 @@ function renderMenuItems() {
       lunch: "점심",
       afternoon_snack: "오후 간식",
     }[menu.mealType] || "미분류"}`;
-    item.append(header, mealType, label, tags, details);
+    item.append(
+      header,
+      mealType,
+      label,
+      tags,
+      details,
+      ...(candidateStatus ? [candidateStatus] : []),
+    );
     menuList.append(item);
   }
 
   updateAnalysisControls();
+  renderExtractionResults("daily");
+  renderExtractionResults("monthly");
 }
 
 function renderAnalysisResults(payload) {
@@ -695,6 +1161,7 @@ async function loadDateMealSheet(dateValue) {
     allergens: menu.allergens,
     isInformationComplete: menu.is_information_complete,
     mealType: menu.meal_type,
+    sourceCandidateId: null,
   }));
   isMealSheetReviewed = mealSheet.status === "REVIEWED";
   isMealSheetLoaded = true;
@@ -988,11 +1455,13 @@ menuForm.addEventListener("submit", (event) => {
     !isMealSheetLoaded ||
     !name ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing
   ) {
     return;
   }
 
+  const existingMenu = menuItems.find((menu) => menu.id === editingMenuId);
   const updatedMenu = {
     id: editingMenuId || crypto.randomUUID(),
     name,
@@ -1003,6 +1472,7 @@ menuForm.addEventListener("submit", (event) => {
       .filter(Boolean)
       .map(normalizeAllergenEntry),
     isInformationComplete: menuInformationComplete.checked,
+    sourceCandidateId: existingMenu?.sourceCandidateId || null,
   };
   if (editingMenuId) {
     menuItems = menuItems.map((menu) =>
@@ -1028,6 +1498,7 @@ async function saveMealSheet(status) {
   if (
     !isMealSheetLoaded ||
     isSavingMealSheet ||
+    isExtractingImage ||
     isAnalyzing ||
     editingMenuId !== null
   ) {
@@ -1057,6 +1528,11 @@ async function saveMealSheet(status) {
     is_information_complete: menu.isInformationComplete,
     meal_type: menu.mealType,
   }));
+  const importedCandidateIds = status === "NO_MEAL"
+    ? []
+    : menuItems
+      .map((menu) => menu.sourceCandidateId)
+      .filter(Boolean);
   isSavingMealSheet = true;
   analysisStatus.textContent = {
     DRAFT: "급식표 초안을 저장하고 있습니다.",
@@ -1101,6 +1577,9 @@ async function saveMealSheet(status) {
       throw new Error("저장 결과를 확인할 수 없습니다.");
     }
 
+    for (const candidateId of importedCandidateIds) {
+      savedExtractionCandidateIds.add(candidateId);
+    }
     currentDateStatus = savedSheet.status;
     menuItems = savedSheet.menus.map((menu) => ({
       id: menu.id,
@@ -1108,6 +1587,7 @@ async function saveMealSheet(status) {
       allergens: menu.allergens,
       isInformationComplete: menu.is_information_complete,
       mealType: menu.meal_type,
+      sourceCandidateId: null,
     }));
     if (savedSheet.status === "NO_MEAL") {
       resetMenuEditor();
@@ -1354,6 +1834,18 @@ mealDateInput.addEventListener("change", async () => {
 });
 mealMonthInput.addEventListener("change", () => {
   loadMonthCalendar(mealMonthInput.value);
+  updateImageUploadControls();
+});
+
+dailyImageInput.addEventListener("change", updateImageUploadControls);
+monthlyImageInput.addEventListener("change", updateImageUploadControls);
+dailyImageForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  extractMealImage("daily");
+});
+monthlyImageForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  extractMealImage("monthly");
 });
 
 retryButton.addEventListener("click", loadProfile);

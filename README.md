@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날짜별 JSON 저장·조회, F03 선택 날짜의 검토 완료 메뉴 비교를 구현했습니다. 기존 날짜 미지정 급식표 비교도 호환 경로로 유지합니다. Gemini 이미지 추출과 F04 챗봇은 아직 구현하지 않았습니다.
+F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토, 날짜별 JSON 저장·조회와 Gemini 이미지 후보 추출, F03 선택 날짜의 검토 완료 메뉴 비교를 구현했습니다. Gemini 추출은 날짜·메뉴·알레르기 표시 후보만 반환하며, 사용자가 검토 화면에서 날짜와 내용을 확인해 저장하기 전에는 기존 급식표나 F03 비교에 반영되지 않습니다. 기존 날짜 미지정 급식표 비교도 호환 경로로 유지합니다. F04 챗봇은 아직 구현하지 않았습니다.
 
 ## 구성
 
@@ -21,6 +21,7 @@ F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날�
 │   │   ├── allergies.py
 │   │   ├── comparison.py
 │   │   ├── date_meal_sheet_storage.py
+│   │   ├── meal_image_extraction.py
 │   │   ├── main.py
 │   │   ├── meal_sheet_storage.py
 │   │   └── profile_storage.py
@@ -52,7 +53,8 @@ F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날�
 - `backend/app/meal_sheet_storage.py`: 기존 날짜 미지정 급식표 JSON과 검토 상태 관리
 - `backend/app/date_meal_sheet_storage.py`: 날짜별 급식표 JSON 저장·조회 및 기존 데이터 미지정 보존
 - `backend/app/comparison.py`: 검토 완료 메뉴와 저장된 프로필의 규칙 기반 비교
-- `backend/app/ai.py`: Gemini 클라이언트 생성 경계. 모델 호출/제품 기능은 아직 없음
+- `backend/app/ai.py`: 환경변수 기반 Gemini 이미지 추출 호출
+- `backend/app/meal_image_extraction.py`: 구조화된 날짜·메뉴 후보와 알레르기 번호 대응 검증
 - `.github/`: 저장소용 Copilot 지침과 반복 작업 스킬
 
 ## 개발 환경
@@ -60,7 +62,7 @@ F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날�
 - Python 3.10 이상
 - Git
 - VS Code (선택)
-- Gemini API 키는 실제 AI 연동을 개발할 때만 필요합니다.
+- Gemini 이미지 추출을 실제 호출하려면 API 키와 모델명을 설정해야 합니다.
 
 PowerShell에서 저장소 루트 기준으로 실행합니다.
 
@@ -72,7 +74,7 @@ python -m pip install -r backend\requirements-dev.txt
 
 `requirements-dev.txt`에는 백엔드 의존성과 테스트용 `pytest`, `httpx2`가 포함됩니다. 런타임 의존성만 설치하려면 `backend\requirements.txt`를 사용하세요.
 
-`.env.example`을 참고해 루트에 `.env`를 만들고, 실제 키가 있을 때만 `GEMINI_API_KEY` 값을 설정하세요. 기존 `.env`가 있다면 덮어쓰지 마세요. `.env`는 Git에서 제외됩니다.
+`.env.example`을 참고해 루트에 `.env`를 만들고 `GEMINI_API_KEY`, `GEMINI_MODEL`을 설정하세요. 기존 `.env`가 있다면 덮어쓰지 마세요. 실제 API 키는 소스나 로그에 기록하지 않으며, `.env`는 Git에서 제외됩니다.
 
 ```powershell
 if (-not (Test-Path .env)) {
@@ -125,10 +127,13 @@ F01 API:
 | `PUT` | `/api/meal-sheets/{date}` | 날짜별 메뉴 초안·검토 완료·급식 없음 저장 |
 | `GET` | `/api/meal-sheets/unassigned` | 날짜가 없는 기존 급식표 보존 데이터 조회 |
 | `GET/PUT` | `/api/meal-sheets/current` | 기존 날짜 미지정 급식표 호환 API |
+| `POST` | `/api/meal-sheets/extract` | JPG/JPEG/PNG 이미지의 날짜·메뉴·알레르기 표시 후보 추출 (저장하지 않음) |
 | `POST` | `/api/analyze` | 기존 날짜 미지정 급식표의 기존 비교 API |
 | `POST` | `/api/meal-sheets/{date}/analyze` | 선택 날짜의 검토 완료된 전체 메뉴와 등록 알레르기 비교 |
 
-날짜별 저장 상태는 `NO_DATA`(정보 없음), `DRAFT`(검토 전), `REVIEWED`(검토 완료), `NO_MEAL`(사용자 확인 후 급식 없음)으로 구분합니다. 날짜별 분석은 `REVIEWED`만 허용하며 다른 상태는 `409`와 상태 안내를 반환합니다. 기존 날짜를 다시 저장할 때는 요청의 `replace_existing: true`가 없으면 `409`로 거부하며, 화면에서 사용자에게 덮어쓰기를 확인합니다. 날짜 없는 기존 데이터는 `unassigned`로 보존하고 원본 `meal_sheet.json`도 수정하지 않습니다. 기존 `/api/analyze`는 날짜 없는 급식표에 대한 호환 비교 경로입니다. 이미지 업로드 및 Gemini 추출은 아직 제공하지 않습니다.
+날짜별 저장 상태는 `NO_DATA`(정보 없음), `DRAFT`(검토 전), `REVIEWED`(검토 완료), `NO_MEAL`(사용자 확인 후 급식 없음)으로 구분합니다. 날짜별 분석은 `REVIEWED`만 허용하며 다른 상태는 `409`와 상태 안내를 반환합니다. 기존 날짜를 다시 저장할 때는 요청의 `replace_existing: true`가 없으면 `409`로 거부하며, 화면에서 사용자에게 덮어쓰기를 확인합니다. 날짜 없는 기존 데이터는 `unassigned`로 보존하고 원본 `meal_sheet.json`도 수정하지 않습니다. 기존 `/api/analyze`는 날짜 없는 급식표에 대한 호환 비교 경로입니다.
+
+이미지 추출 API는 multipart 형식으로 `image`, `scope`(`daily` 또는 `monthly`)와 날짜/월 참고값을 받습니다. 날짜 참고값은 Gemini에 연도를 추정시키거나 후보 날짜를 자동 지정하는 데 쓰지 않습니다. 연도까지 이미지에서 명시적으로 확인된 날짜만 날짜 후보로 반환하고, 그 외 메뉴는 날짜 미지정으로 남깁니다. 번호 표기는 기존 1~19 대응표를 사용하며 이미지 범례가 불일치하거나 불명확하면 항목명 변환 대신 추가 확인을 요구합니다. 추출 결과는 사용자 검토 전 후보이며 JSON 저장소에 기록되지 않습니다. 실제 Gemini API 호출은 키와 모델 환경변수가 필요하고, 테스트에서는 모의 응답을 사용합니다.
 
 ## 검증
 

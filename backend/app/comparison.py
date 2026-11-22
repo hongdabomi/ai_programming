@@ -3,14 +3,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
-from backend.app.allergies import ALLERGEN_NUMBER_TO_NAME, ALLERGY_OPTIONS
+from backend.app.allergies import (
+    ALLERGEN_NUMBER_TO_NAME,
+    normalize_allergen_name,
+)
 
 ComparisonStatus = Literal["MATCH", "CHECK_NEEDED", "NOT_IDENTIFIED"]
 
-ALLERGEN_ALIASES = {
-    "달걀": "난류(가금류)",
-    "난류(달걀 등 가금류 알)": "난류(가금류)",
-}
 NUMBERED_ALLERGEN_PATTERN = re.compile(
     r"(?P<number>[1-9]|1[0-9])(?:\.\s*(?P<name>.+))?"
 )
@@ -35,10 +34,9 @@ class ComparisonResult(TypedDict):
 
 def _resolve_allergen(label: str) -> str | None:
     normalized = label.strip()
-    if normalized in ALLERGY_OPTIONS:
-        return normalized
-    if normalized in ALLERGEN_ALIASES:
-        return ALLERGEN_ALIASES[normalized]
+    canonical_name = normalize_allergen_name(normalized)
+    if canonical_name:
+        return canonical_name
 
     match = NUMBERED_ALLERGEN_PATTERN.fullmatch(normalized)
     if match is None:
@@ -50,7 +48,7 @@ def _resolve_allergen(label: str) -> str | None:
     provided_name = match.group("name")
     if provided_name is not None:
         normalized_name = provided_name.strip()
-        if ALLERGEN_ALIASES.get(normalized_name, normalized_name) != allergen:
+        if normalize_allergen_name(normalized_name) != allergen:
             return None
     return allergen
 
