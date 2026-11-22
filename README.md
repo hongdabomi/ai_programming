@@ -4,7 +4,7 @@
 
 ## 현재 상태
 
-F01 알레르기 정보 등록, F03 알레르기 성분 비교, F02 급식 메뉴 수동 입력·검토를 구현했습니다. 프로필과 급식표 메뉴는 로컬 JSON 파일에 저장됩니다. 사용자가 검토 완료로 저장한 메뉴만 비교에 사용합니다. Gemini 이미지 추출과 F04 챗봇은 아직 구현하지 않았습니다.
+F01 알레르기 정보 등록, F02 급식 메뉴 수동 입력·검토 및 날짜별 JSON 저장·조회, F03 기존 날짜 미지정 급식표 비교를 구현했습니다. 검토 완료한 날짜별 메뉴는 날짜마다 구분해 보관되며, 날짜별 F03 비교는 아직 제공하지 않습니다. Gemini 이미지 추출과 F04 챗봇도 아직 구현하지 않았습니다.
 
 ## 구성
 
@@ -20,11 +20,13 @@ F01 알레르기 정보 등록, F03 알레르기 성분 비교, F02 급식 메�
 │   │   ├── ai.py
 │   │   ├── allergies.py
 │   │   ├── comparison.py
+│   │   ├── date_meal_sheet_storage.py
 │   │   ├── main.py
 │   │   ├── meal_sheet_storage.py
 │   │   └── profile_storage.py
 │   ├── tests/
 │   │   ├── test_comparison.py
+│   │   ├── test_date_meal_sheets.py
 │   │   ├── test_meal_sheet.py
 │   │   ├── test_main.py
 │   │   └── test_profile.py
@@ -33,7 +35,8 @@ F01 알레르기 정보 등록, F03 알레르기 성분 비교, F02 급식 메�
 ├── frontend/
 │   └── index.html
 ├── backend/data/profile.json  # 실행 후 생성되는 로컬 데이터 (Git 제외)
-├── backend/data/meal_sheet.json  # 검토 상태 및 메뉴가 저장되는 로컬 데이터 (Git 제외)
+├── backend/data/meal_sheet.json  # 기존 날짜 미지정 급식표 (Git 제외)
+├── backend/data/meal_sheets.json  # 날짜별 급식표 JSON (Git 제외)
 ├── pytest.ini
 ├── .env.example
 ├── .gitignore
@@ -44,7 +47,8 @@ F01 알레르기 정보 등록, F03 알레르기 성분 비교, F02 급식 메�
 - `backend/app/main.py`: FastAPI 애플리케이션, 상태·프로필·급식표·비교 API
 - `backend/app/allergies.py`: 학교 급식 알레르기 표시 19종 선택 항목
 - `backend/app/profile_storage.py`: 데모 프로필 JSON 읽기·쓰기
-- `backend/app/meal_sheet_storage.py`: 수동 입력 급식표 JSON 읽기·쓰기와 검토 상태 확인
+- `backend/app/meal_sheet_storage.py`: 기존 날짜 미지정 급식표 JSON과 검토 상태 관리
+- `backend/app/date_meal_sheet_storage.py`: 날짜별 급식표 JSON 저장·조회 및 기존 데이터 미지정 보존
 - `backend/app/comparison.py`: 검토 완료 메뉴와 저장된 프로필의 규칙 기반 비교
 - `backend/app/ai.py`: Gemini 클라이언트 생성 경계. 모델 호출/제품 기능은 아직 없음
 - `.github/`: 저장소용 Copilot 지침과 반복 작업 스킬
@@ -96,7 +100,7 @@ python -m http.server 5500 --directory frontend
 
 그 후 브라우저에서 `http://127.0.0.1:5500`을 엽니다. API와 프론트엔드는 각각 8000, 5500 포트에서 실행해야 합니다.
 
-데모 프로필은 `backend\data\profile.json`, 수동 급식표는 `backend\data\meal_sheet.json`에 저장되어 서버를 다시 실행해도 유지됩니다. 두 파일은 로컬 전용이며 Git에서 제외됩니다. 실제 아동의 이름이나 건강정보를 입력하지 마세요. 현재는 가상 프로필 `테스트 자녀`만 사용합니다.
+데모 프로필은 `backend\data\profile.json`, 새 날짜별 급식표는 `backend\data\meal_sheets.json`에 저장되어 서버를 다시 실행해도 유지됩니다. 이 파일들은 로컬 전용이며 Git에서 제외됩니다. 기존 `backend\data\meal_sheet.json`은 삭제하거나 수정하지 않습니다. 날짜가 없는 기존 메뉴는 별도의 미지정 영역에 보존되며, 날짜를 자동 지정하지 않습니다. 화면에서 사용자가 날짜를 선택해 초안으로 복사하고 저장한 뒤에만 날짜별 데이터가 됩니다. 실제 아동의 이름이나 건강정보를 입력하지 마세요. 현재는 가상 프로필 `테스트 자녀`만 사용합니다.
 
 F01 API:
 
@@ -112,11 +116,14 @@ F01 API:
 
 | Method | Path | 동작 |
 |---|---|---|
-| `GET` | `/api/meal-sheets/current` | 저장된 급식표와 메뉴 검토 상태 조회 |
-| `PUT` | `/api/meal-sheets/current` | 메뉴 전체 목록과 검토 상태 저장·수정 |
-| `POST` | `/api/analyze` | 저장된 알레르기 프로필과 검토 완료 급식표만 비교 |
+| `GET` | `/api/meal-sheets?month=YYYY-MM` | 해당 월에 저장된 날짜와 상태 목록 조회 |
+| `GET` | `/api/meal-sheets/{date}` | 날짜별 급식표 조회. 기록이 없으면 `NO_DATA` 반환 |
+| `PUT` | `/api/meal-sheets/{date}` | 날짜별 메뉴 초안·검토 완료·급식 없음 저장 |
+| `GET` | `/api/meal-sheets/unassigned` | 날짜가 없는 기존 급식표 보존 데이터 조회 |
+| `GET/PUT` | `/api/meal-sheets/current` | 기존 날짜 미지정 급식표 호환 API |
+| `POST` | `/api/analyze` | 기존 날짜 미지정 급식표의 기존 비교 API |
 
-메뉴를 추가·수정·삭제한 초안은 `reviewed: false`로 저장됩니다. 사용자가 검토 완료로 저장해야 비교할 수 있으며, 미검토 상태에서는 분석 API가 `409`를 반환합니다. 이미지 업로드 및 Gemini 추출은 아직 제공하지 않습니다.
+날짜별 저장 상태는 `NO_DATA`(정보 없음), `DRAFT`(검토 전), `REVIEWED`(검토 완료), `NO_MEAL`(사용자 확인 후 급식 없음)으로 구분합니다. 기존 날짜를 다시 저장할 때는 요청의 `replace_existing: true`가 없으면 `409`로 거부하며, 화면에서 사용자에게 덮어쓰기를 확인합니다. 날짜 없는 기존 데이터는 `unassigned`로 보존하고 원본 `meal_sheet.json`도 수정하지 않습니다. 기존 `/api/analyze`는 날짜별 저장 데이터와 연결되지 않으며 날짜 없는 급식표에 대해서만 이전 방식으로 동작합니다. 이미지 업로드 및 Gemini 추출은 아직 제공하지 않습니다.
 
 ## 검증
 
