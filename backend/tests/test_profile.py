@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.allergies import ALLERGEN_NUMBER_TO_NAME
+
 from backend.app import profile_storage
 from backend.app.main import app
 
@@ -22,6 +24,10 @@ def test_allergen_options_are_available() -> None:
     items = response.json()["items"]
     assert len(items) == 19
     assert "우유" in items
+    assert response.json()["numbered_items"] == [
+        {"number": number, "name": name}
+        for number, name in ALLERGEN_NUMBER_TO_NAME.items()
+    ]
 
 
 def test_profile_defaults_to_empty_demo_profile(profile_file: Path) -> None:

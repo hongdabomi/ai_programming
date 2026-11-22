@@ -24,6 +24,7 @@ const saveMealSheetButton = document.querySelector(
 const confirmMealSheetButton = document.querySelector(
   "#confirm-meal-sheet-button",
 );
+const analyzeDateButton = document.querySelector("#analyze-date-button");
 const noMealButton = document.querySelector("#no-meal-button");
 const analyzeLegacyButton = document.querySelector("#analyze-legacy-button");
 const menuList = document.querySelector("#menu-list");
@@ -40,6 +41,8 @@ const copyLegacyButton = document.querySelector("#copy-legacy-button");
 const analysisResults = document.querySelector("#analysis-results");
 const analysisDisclaimer = document.querySelector("#analysis-disclaimer");
 const analysisResultsStatus = document.querySelector("#analysis-results-status");
+const resultsHeading = document.querySelector("#results-heading");
+const resultsDescription = document.querySelector("#results-description");
 const progressWrap = document.querySelector("#progress-wrap");
 const screens = {
   home: document.querySelector("#home-screen"),
@@ -52,6 +55,8 @@ const screens = {
 const savedSheetAvailability = document.querySelector("#saved-sheet-availability");
 
 let allergyOptions = [];
+let allergyNumberToName = new Map();
+let allergyNameToNumber = new Map();
 let savedAllergies = [];
 let menuItems = [];
 let editingMenuId = null;
@@ -123,14 +128,60 @@ function normalizeAllergenEntry(allergen) {
     : allergen;
 }
 
-function renderAllergyNumberReference() {
+function isValidNumberedAllergenItems(numberedItems, items) {
+  return (
+    Array.isArray(numberedItems) &&
+    numberedItems.length === items.length &&
+    numberedItems.every(
+      (item, index) =>
+        item &&
+        typeof item.number === "number" &&
+        Number.isInteger(item.number) &&
+        item.number === index + 1 &&
+        typeof item.name === "string" &&
+        items.includes(item.name),
+    ) &&
+    new Set(numberedItems.map((item) => item.name)).size === items.length
+  );
+}
+
+function renderAllergyNumberReference(numberedItems) {
   const list = document.querySelector("#allergy-number-reference");
   list.replaceChildren();
-  allergyOptions.forEach((allergy) => {
+  numberedItems.forEach(({ number, name }) => {
     const item = document.createElement("li");
-    item.textContent = getAllergyDisplayName(allergy);
+    item.textContent = `${number}. ${getAllergyDisplayName(name)}`;
     list.append(item);
   });
+}
+
+function resolveNumberedAllergen(allergen) {
+  const normalized = normalizeAllergenEntry(allergen.trim());
+  const knownNumber = allergyNameToNumber.get(normalized);
+  if (knownNumber) {
+    return { number: knownNumber, name: normalized };
+  }
+
+  const match = /^(?<number>[1-9]|1[0-9])(?:\.\s*(?<name>.+))?$/.exec(
+    allergen.trim(),
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  const number = Number(match.groups.number);
+  const name = allergyNumberToName.get(number);
+  if (!name) {
+    return null;
+  }
+  const providedName = match.groups.name?.trim();
+  if (
+    providedName &&
+    normalizeAllergenEntry(providedName) !== name
+  ) {
+    return null;
+  }
+  return { number, name };
 }
 
 function renderAllergenTags(container, allergens) {
@@ -144,15 +195,11 @@ function renderAllergenTags(container, allergens) {
   }
 
   for (const allergen of allergens) {
-    const canonical = allergen === "달걀" ||
-        allergen === "난류(달걀 등 가금류 알)"
-      ? "난류(가금류)"
-      : allergen;
-    const number = allergyOptions.indexOf(canonical) + 1;
+    const mapped = resolveNumberedAllergen(allergen);
     const tag = document.createElement("span");
-    tag.className = number ? "allergen-tag" : "allergen-tag unknown";
-    tag.textContent = number
-      ? `${number}. ${getAllergyDisplayName(canonical)}`
+    tag.className = mapped ? "allergen-tag" : "allergen-tag unknown";
+    tag.textContent = mapped
+      ? `${mapped.number}. ${getAllergyDisplayName(mapped.name)}`
       : `확인 필요 · ${allergen}`;
     container.append(tag);
   }
@@ -264,6 +311,17 @@ function updateAnalysisControls() {
     isSavingMealSheet ||
     isAnalyzing ||
     editingMenuId !== null;
+  analyzeDateButton.disabled =
+    !isLoaded ||
+    !isMealSheetLoaded ||
+    currentDateStatus !== "REVIEWED" ||
+    !isMealSheetReviewed ||
+    isSavingMealSheet ||
+    isAnalyzing ||
+    isMealSheetDirty ||
+    editingMenuId !== null ||
+    savedAllergies.length === 0 ||
+    hasUnsavedAllergyChanges;
   analyzeLegacyButton.disabled =
     !isLoaded ||
     isAnalyzing ||
@@ -613,6 +671,12 @@ async function loadDateMealSheet(dateValue) {
   menuItems = [];
   resetMenuEditor();
   renderMenuItems();
+  analysisResults.replaceChildren();
+  analysisResultsStatus.textContent = "";
+  analysisDisclaimer.hidden = true;
+  resultsHeading.textContent = "알레르기 비교 결과";
+  resultsDescription.textContent =
+    "선택한 날짜의 검토 완료 메뉴만 비교합니다.";
   currentDateStatus = "NO_DATA";
   updateSelectedDateStatus("날짜별 급식표 정보를 불러오는 중입니다.");
   updateAnalysisControls();
@@ -641,7 +705,7 @@ async function loadDateMealSheet(dateValue) {
   analysisStatus.textContent = {
     NO_DATA: "이 날짜에 메뉴를 입력하거나 급식 없음 상태를 저장할 수 있습니다.",
     DRAFT: "저장된 초안입니다. 내용을 확인한 뒤 검토 완료로 저장해 주세요.",
-    REVIEWED: "검토 완료된 메뉴를 불러왔습니다. 날짜별 비교는 아직 제공하지 않습니다.",
+    REVIEWED: "검토 완료된 메뉴를 불러왔습니다. 선택한 날짜를 비교할 수 있습니다.",
     NO_MEAL: "급식 없음으로 확인된 날짜입니다. 메뉴를 추가하면 검토 전 상태가 됩니다.",
   }[mealSheet.status];
   setMealSheetMode();
@@ -821,6 +885,10 @@ async function loadProfile() {
     if (
       !Array.isArray(allergens.items) ||
       allergens.items.some((item) => typeof item !== "string") ||
+      !isValidNumberedAllergenItems(
+        allergens.numbered_items,
+        allergens.items,
+      ) ||
       profile.id !== "demo-child" ||
       !Array.isArray(profile.allergies) ||
       profile.allergies.some((item) => typeof item !== "string") ||
@@ -830,8 +898,14 @@ async function loadProfile() {
     }
 
     allergyOptions = allergens.items;
+    allergyNumberToName = new Map(
+      allergens.numbered_items.map(({ number, name }) => [number, name]),
+    );
+    allergyNameToNumber = new Map(
+      allergens.numbered_items.map(({ number, name }) => [name, number]),
+    );
     renderOptions(allergyOptions, profile.allergies);
-    renderAllergyNumberReference();
+    renderAllergyNumberReference(allergens.numbered_items);
     savedAllergies = getSelectedAllergies();
     fieldset.disabled = false;
     isLoaded = true;
@@ -1044,7 +1118,7 @@ async function saveMealSheet(status) {
       `${selectedDate} · ${getDateStatusLabel(savedSheet.status)}`;
     analysisStatus.textContent = {
       DRAFT: "검토 전 상태로 저장했습니다.",
-      REVIEWED: "검토 완료로 저장했습니다. 날짜별 비교는 아직 제공하지 않습니다.",
+      REVIEWED: "검토 완료로 저장했습니다. 선택한 날짜를 비교할 수 있습니다.",
       NO_MEAL: "사용자가 확인한 급식 없음 상태로 저장했습니다.",
     }[savedSheet.status];
     updateSelectedDateStatus();
@@ -1117,9 +1191,8 @@ analyzeLegacyButton.addEventListener("click", async () => {
     });
 
     renderAnalysisResults(payload);
-    const resultsHeading = document.querySelector("#results-heading");
     resultsHeading.textContent = "날짜 미지정 급식표의 기존 비교";
-    document.querySelector("#results-description").textContent =
+    resultsDescription.textContent =
       "날짜가 배정되지 않은 기존 정보에 대한 비교 결과이며, 선택 날짜의 비교가 아닙니다.";
     analysisStatus.textContent =
       `날짜 미지정 메뉴 ${payload.results.length}개의 기존 비교 결과입니다.`;
@@ -1129,6 +1202,71 @@ analyzeLegacyButton.addEventListener("click", async () => {
     analysisStatus.textContent = error instanceof TypeError
       ? "API 서버에 연결할 수 없어 비교하지 못했습니다."
       : `비교하지 못했습니다. ${error.message}`;
+  } finally {
+    isAnalyzing = false;
+    updateAnalysisControls();
+  }
+});
+
+analyzeDateButton.addEventListener("click", async () => {
+  if (
+    !isLoaded ||
+    !isMealSheetLoaded ||
+    currentDateStatus !== "REVIEWED" ||
+    !isMealSheetReviewed ||
+    isAnalyzing ||
+    isSavingMealSheet ||
+    isMealSheetDirty ||
+    editingMenuId !== null ||
+    savedAllergies.length === 0
+  ) {
+    analysisStatus.textContent = {
+      NO_DATA: "이 날짜에는 저장된 급식 정보가 없습니다.",
+      DRAFT: "비교하려면 이 날짜의 메뉴를 검토 완료로 저장해 주세요.",
+      NO_MEAL: "급식 없음으로 확인된 날짜에는 비교할 메뉴가 없습니다.",
+    }[currentDateStatus] ||
+      "저장된 알레르기 정보를 확인하고 날짜별 메뉴를 검토 완료로 저장해 주세요.";
+    return;
+  }
+
+  const requestedDate = selectedDate;
+  isAnalyzing = true;
+  analysisStatus.textContent =
+    `${requestedDate}의 검토 완료 메뉴를 비교하고 있습니다.`;
+  analysisResults.replaceChildren();
+  analysisResultsStatus.textContent = "";
+  analysisDisclaimer.hidden = true;
+  updateAnalysisControls();
+
+  try {
+    const payload = await requestJson(
+      `/api/meal-sheets/${encodeURIComponent(requestedDate)}/analyze`,
+      { method: "POST" },
+    );
+    if (payload.date !== requestedDate) {
+      throw new Error("선택 날짜와 비교 결과의 날짜가 일치하지 않습니다.");
+    }
+    if (selectedDate !== requestedDate) {
+      return;
+    }
+
+    renderAnalysisResults(payload);
+    resultsHeading.textContent = `${requestedDate} 알레르기 비교 결과`;
+    resultsDescription.textContent =
+      `${requestedDate}에 검토 완료로 저장한 하루치 전체 메뉴의 비교 결과입니다.`;
+    analysisStatus.textContent =
+      `${requestedDate} · 메뉴 ${payload.results.length}개의 비교 결과입니다.`;
+    analysisResultsStatus.textContent = analysisStatus.textContent;
+    showStep("results");
+  } catch (error) {
+    if (selectedDate !== requestedDate) {
+      return;
+    }
+    analysisStatus.textContent = error instanceof TypeError
+      ? "API 서버에 연결할 수 없어 비교하지 못했습니다."
+      : error.status === 409
+        ? error.message.replace(/ \(HTTP 409\)$/, "")
+        : `비교하지 못했습니다. ${error.message}`;
   } finally {
     isAnalyzing = false;
     updateAnalysisControls();

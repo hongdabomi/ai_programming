@@ -1,5 +1,5 @@
-from pathlib import Path
 from datetime import date
+from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from backend.app.allergies import ALLERGY_OPTIONS
+from backend.app.allergies import ALLERGEN_NUMBER_TO_NAME, ALLERGY_OPTIONS
 from backend.app.comparison import MenuItem, compare_menus
 from backend.app import date_meal_sheet_storage, meal_sheet_storage, profile_storage
 
@@ -98,6 +98,12 @@ class AnalysisResponse(BaseModel):
     disclaimer: str
 
 
+class DateAnalysisResponse(BaseModel):
+    date: date
+    results: list[ComparisonResultResponse]
+    disclaimer: str
+
+
 class MealSheetResponse(BaseModel):
     source: Literal["manual"]
     reviewed: bool
@@ -158,8 +164,14 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/api/allergens")
-def get_allergen_options() -> dict[str, tuple[str, ...]]:
-    return {"items": ALLERGY_OPTIONS}
+def get_allergen_options() -> dict[str, object]:
+    return {
+        "items": ALLERGY_OPTIONS,
+        "numbered_items": [
+            {"number": number, "name": name}
+            for number, name in ALLERGEN_NUMBER_TO_NAME.items()
+        ],
+    }
 
 
 @app.get("/api/profile", response_model=ProfileResponse)
@@ -280,6 +292,76 @@ def update_date_meal_sheet(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except date_meal_sheet_storage.DateMealSheetStorageError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/meal-sheets/{selected_date}/analyze",
+    response_model=DateAnalysisResponse,
+)
+def analyze_date_meal_sheet(selected_date: date) -> DateAnalysisResponse:
+    try:
+        profile = profile_storage.load_profile()
+    except profile_storage.ProfileStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if not profile["allergies"]:
+        raise HTTPException(
+            status_code=409,
+            detail="먼저 알레르기 정보를 등록해 주세요.",
+        )
+
+    try:
+        meal_sheet = date_meal_sheet_storage.get_date_meal_sheet(
+            selected_date.isoformat()
+        )
+    except date_meal_sheet_storage.DateMealSheetStorageError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if meal_sheet["status"] == "NO_DATA":
+        raise HTTPException(
+            status_code=409,
+            detail="선택한 날짜에 저장된 급식 정보가 없습니다.",
+        )
+    if meal_sheet["status"] == "DRAFT":
+        raise HTTPException(
+            status_code=409,
+            detail="선택한 날짜의 메뉴를 검토 완료로 저장한 뒤 비교해 주세요.",
+        )
+    if meal_sheet["status"] == "NO_MEAL":
+        raise HTTPException(
+            status_code=409,
+            detail="선택한 날짜는 급식 없음으로 확인되어 비교할 메뉴가 없습니다.",
+        )
+    if meal_sheet["status"] != "REVIEWED" or not meal_sheet["reviewed"]:
+        raise HTTPException(
+            status_code=409,
+            detail="선택한 날짜의 메뉴를 검토 완료로 저장한 뒤 비교해 주세요.",
+        )
+
+    menus = [
+        MenuItem(
+            id=menu["id"],
+            name=menu["name"],
+            allergens=(
+                tuple(menu["allergens"])
+                if menu["allergens"] is not None
+                else None
+            ),
+            is_information_complete=menu["is_information_complete"],
+        )
+        for menu in meal_sheet["menus"]
+    ]
+    results = compare_menus(profile["allergies"], menus)
+
+    return DateAnalysisResponse(
+        date=selected_date,
+        results=results,
+        disclaimer=(
+            "비교 결과는 선택 날짜의 검토 완료 메뉴에 입력된 표시를 기준으로 합니다. "
+            "일치 항목 미확인은 섭취 안전을 보장하지 않습니다. "
+            "실제 원재료와 조리 과정은 교육기관 담당자에게 확인해 주세요."
+        ),
+    )
 
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
