@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import meal_sheet_storage, profile_storage
+from backend.app.allergies import ALLERGEN_NUMBER_TO_NAME
 from backend.app.comparison import MenuItem, compare_menus
 from backend.app.main import app
 
@@ -133,6 +134,36 @@ def test_comparison_scenarios(
 
 def test_empty_menu_list_returns_no_results() -> None:
     assert compare_menus(["우유"], []) == []
+
+
+@pytest.mark.parametrize(
+    ("number", "allergen"), sorted(ALLERGEN_NUMBER_TO_NAME.items())
+)
+def test_explicit_allergen_numbers_match_their_mapped_names(
+    number: int, allergen: str
+) -> None:
+    for label in (str(number), f"{number}. {allergen}"):
+        result = compare_menus(
+            [allergen],
+            [MenuItem("m1", "메뉴", (label,), True)],
+        )[0]
+
+        assert result["status"] == "MATCH"
+        assert result["matched_allergens"] == [allergen]
+        assert result["evidence"] == [label]
+
+
+@pytest.mark.parametrize("label", ["20", "2. 밀"])
+def test_invalid_or_conflicting_allergen_numbers_need_confirmation(
+    label: str,
+) -> None:
+    result = compare_menus(
+        ["우유"],
+        [MenuItem("m1", "메뉴", (label,), True)],
+    )[0]
+
+    assert result["status"] == "CHECK_NEEDED"
+    assert result["matched_allergens"] == []
 
 
 def test_unrecognized_display_is_included_in_the_reason() -> None:
