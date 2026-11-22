@@ -1,19 +1,36 @@
+import re
+from io import BytesIO
 from datetime import date
 from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.app.allergies import ALLERGEN_NUMBER_TO_NAME, ALLERGY_OPTIONS
+from backend.app import ai, date_meal_sheet_storage, meal_sheet_storage, profile_storage
 from backend.app.comparison import MenuItem, compare_menus
-from backend.app import date_meal_sheet_storage, meal_sheet_storage, profile_storage
+from backend.app.meal_image_extraction import (
+    ExtractionScope,
+    GeminiMealExtraction,
+    MealImageExtractionResponse,
+    build_image_extraction_response,
+)
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 app = FastAPI(title="한끼살핌 API")
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_PIXELS = 40_000_000
+IMAGE_MIME_TYPES = {
+    ".jpg": ("image/jpeg", {"image/jpeg", "image/jpg"}),
+    ".jpeg": ("image/jpeg", {"image/jpeg", "image/jpg"}),
+    ".png": ("image/png", {"image/png"}),
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -158,6 +175,88 @@ class UnassignedMealSheetResponse(BaseModel):
     menus: list[DateMealMenuInput]
 
 
+def _validate_meal_image(
+    image: UploadFile | None,
+) -> tuple[bytes, str]:
+    if image is None or not image.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="급식표 이미지 파일을 선택해 주세요.",
+        )
+
+    image_type = IMAGE_MIME_TYPES.get(Path(image.filename).suffix.lower())
+    if image_type is None or image.content_type not in image_type[1]:
+        raise HTTPException(
+            status_code=415,
+            detail="JPG, JPEG, PNG 형식의 이미지만 업로드할 수 있습니다.",
+        )
+
+    try:
+        image_bytes = image.file.read(MAX_IMAGE_BYTES + 1)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="업로드한 이미지 파일을 읽을 수 없습니다.",
+        ) from exc
+
+    if not image_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="빈 이미지 파일은 처리할 수 없습니다.",
+        )
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="이미지 파일은 10MB 이하로 업로드해 주세요.",
+        )
+
+    expected_format = {
+        "image/jpeg": "JPEG",
+        "image/png": "PNG",
+    }[image_type[0]]
+    try:
+        with Image.open(BytesIO(image_bytes)) as decoded_image:
+            if decoded_image.format != expected_format:
+                raise HTTPException(
+                    status_code=415,
+                    detail="파일 확장자와 실제 이미지 형식이 일치하지 않습니다.",
+                )
+            if decoded_image.width * decoded_image.height > MAX_IMAGE_PIXELS:
+                raise HTTPException(
+                    status_code=413,
+                    detail="이미지 해상도가 너무 큽니다.",
+                )
+            decoded_image.verify()
+    except HTTPException:
+        raise
+    except (
+        Image.DecompressionBombError,
+        OSError,
+        UnidentifiedImageError,
+    ) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="유효한 JPG, JPEG, PNG 이미지를 업로드해 주세요.",
+        ) from exc
+
+    return image_bytes, image_type[0]
+
+
+def _validate_reference_month(reference_month: str | None) -> str | None:
+    if reference_month is None:
+        return None
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", reference_month):
+        raise HTTPException(status_code=422, detail="월 형식이 올바르지 않습니다.")
+    try:
+        date.fromisoformat(f"{reference_month}-01")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="월 형식이 올바르지 않습니다.",
+        ) from exc
+    return reference_month
+
+
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
@@ -292,6 +391,81 @@ def update_date_meal_sheet(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except date_meal_sheet_storage.DateMealSheetStorageError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/meal-sheets/extract",
+    response_model=MealImageExtractionResponse,
+)
+def extract_meal_sheet_candidates(
+    image: UploadFile | None = File(default=None),
+    scope: ExtractionScope = Form(default="daily"),
+    selected_date: date | None = Form(default=None),
+    reference_date: date | None = Form(default=None),
+    reference_month: str | None = Form(default=None),
+) -> MealImageExtractionResponse:
+    image_bytes, mime_type = _validate_meal_image(image)
+    normalized_month = _validate_reference_month(reference_month)
+
+    if selected_date is None:
+        raise HTTPException(
+            status_code=422,
+            detail="이미지에서 확인할 날짜를 선택해 주세요.",
+        )
+    if scope == "daily" and normalized_month is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="하루 급식표에는 날짜 참고값을 사용해 주세요.",
+        )
+    if scope == "daily" and reference_date not in (None, selected_date):
+        raise HTTPException(
+            status_code=422,
+            detail="하루 급식표의 참고 날짜와 선택한 날짜가 다릅니다.",
+        )
+    if scope == "monthly" and reference_date is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="월간 급식표에는 월 참고값을 사용해 주세요.",
+        )
+    if scope == "monthly" and normalized_month not in (
+        None,
+        selected_date.strftime("%Y-%m"),
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="월간 급식표의 조회 월과 선택한 날짜가 다릅니다.",
+        )
+
+    try:
+        extraction: GeminiMealExtraction = ai.extract_meal_menus(
+            image_bytes,
+            mime_type,
+            scope,
+            selected_date,
+        )
+    except ai.GeminiConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ai.GeminiServiceError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Gemini 이미지 추출에 실패했습니다. "
+                "기존 저장 데이터는 변경되지 않았습니다. "
+                "이미지를 다시 확인하거나 메뉴를 직접 입력해 주세요."
+            ),
+        ) from exc
+
+    return build_image_extraction_response(
+        extraction,
+        scope,
+        selected_date,
+        selected_date if scope == "daily" else None,
+        (
+            normalized_month or selected_date.strftime("%Y-%m")
+            if scope == "monthly"
+            else None
+        ),
+    )
 
 
 @app.post(

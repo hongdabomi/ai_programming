@@ -174,7 +174,7 @@ def test_unrecognized_display_is_included_in_the_reason() -> None:
 
     assert result["status"] == "CHECK_NEEDED"
     assert result["evidence"] == ["알레르기 번호 2"]
-    assert "알레르기 번호 2" in result["reason"]
+    assert "해석하지 못한 부분" in result["reason"]
 
 
 def test_no_identified_match_does_not_claim_food_is_safe() -> None:
@@ -185,6 +185,25 @@ def test_no_identified_match_does_not_claim_food_is_safe() -> None:
 
     assert result["status"] == "NOT_IDENTIFIED"
     assert "섭취 안전을 보장하지 않습니다" in result["reason"]
+
+
+@pytest.mark.parametrize(
+    ("marking", "expected_status", "expected_match"),
+    [
+        ("범례 확인 필요: ①⑤⑥⑩⑬", "NOT_IDENTIFIED", []),
+        ("①③⑤", "MATCH", ["메밀"]),
+        ("1⑤⑥1013", "CHECK_NEEDED", []),
+    ],
+)
+def test_circled_markings_are_checked_against_registered_allergy_only(
+    marking: str, expected_status: str, expected_match: list[str]
+) -> None:
+    result = compare_menus(
+        ["메밀"], [MenuItem("m1", "메뉴", (marking,), False)]
+    )[0]
+
+    assert result["status"] == expected_status
+    assert result["matched_allergens"] == expected_match
 
 
 def test_twenty_menus_are_compared_within_one_second() -> None:

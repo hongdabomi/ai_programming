@@ -41,3 +41,15 @@ ALLERGEN_NUMBER_TO_NAME: dict[int, str] = {
     18: "조개류(굴·전복·홍합 포함)",
     19: "잣",
 }
+
+ALLERGEN_NAME_ALIASES = {
+    "달걀": "난류(가금류)",
+    "난류(달걀 등 가금류 알)": "난류(가금류)",
+}
+
+
+def normalize_allergen_name(value: str) -> str | None:
+    normalized = value.strip()
+    if normalized in ALLERGY_OPTIONS:
+        return normalized
+    return ALLERGEN_NAME_ALIASES.get(normalized)
