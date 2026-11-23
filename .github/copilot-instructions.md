@@ -12,11 +12,14 @@
 - `backend/app/main.py`: FastAPI 앱 및 `/health`
 - `backend/app/ai.py`: Gemini 클라이언트 생성 경계
 - `backend/requirements.txt`: Python 의존성
+- `backend/requirements-dev.txt`: 개발·테스트 의존성
+- `backend/tests/`: 백엔드 테스트
+- 루트 `pytest.ini`: pytest 테스트 검색 경로
 - 루트 `.env.example`: 필요한 환경변수 이름만 제공. 실제 키는 `.env`에만 저장한다.
-- 개발 환경은 Python 3.10 이상과 PowerShell을 기준으로 한다. 설치는 `py -3 -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, `python -m pip install -r backend\requirements.txt` 순서다.
+- 개발 환경은 Python 3.10 이상과 PowerShell을 기준으로 한다. 설치는 `py -3 -m venv .venv`, `.\.venv\Scripts\Activate.ps1`, `python -m pip install -r backend\requirements-dev.txt` 순서다. 런타임 의존성만 필요하면 `backend\requirements.txt`를 사용한다.
 - API 실행: `python -m uvicorn backend.app.main:app --reload`; 상태 확인: `Invoke-RestMethod http://127.0.0.1:8000/health`.
 - 프론트엔드 확인: `python -m http.server 5500 --directory frontend` 후 `http://127.0.0.1:5500`을 연다. 프론트엔드는 현재 API와 연결되어 있지 않다.
-- 변경 후 최소 `python -m compileall backend`를 실행한다. 테스트와 린터는 아직 설정되어 있지 않으므로, 기능을 추가할 때 범위에 맞는 자동화 테스트를 함께 구성하고 실행 결과를 보고한다.
+- 변경 후 `python -m pytest`와 최소 `python -m compileall backend`를 실행한다. 린터는 아직 설정되어 있지 않다. 기능을 추가할 때 범위에 맞는 자동화 테스트를 함께 구성하고 실행 결과를 보고한다.
 
 ## 구현 원칙
 
@@ -25,6 +28,8 @@
 - `MATCH`, `CHECK_NEEDED`, `NOT_IDENTIFIED`를 구분한다. 일치가 확인되지 않았다는 결과를 안전 판정으로 표현하지 말고, 정보가 부족하면 추가 확인을 안내한다. 의료적 진단이나 섭취 안전을 보장하지 않는다.
 - 테스트와 데모에는 가상 데이터를 사용한다. 실제 아동 개인정보, API 키, 기타 비밀정보를 소스나 로그에 넣지 않는다.
 - 환경변수 누락과 API 오류는 명확히 알리고, 조용한 기본값이나 성공처럼 보이는 대체 결과로 숨기지 않는다.
+- `feat/*`와 `chore/*` 브랜치는 최신 `develop`에서 생성하고, PR 대상은 기본적으로 `develop`으로 한다.
+- `develop`에서 `main`으로의 PR은 최종 통합과 검증을 마친 뒤에만 진행한다.
 - 사용자 승인 없이 Git commit 또는 push를 수행하거나 Pull Request를 만들지 않는다. 요청 범위 밖의 파일을 stage하지 않는다.
 
 ## 코드 변경 점검
@@ -39,4 +44,4 @@
 
 ## 변경 보고
 
-변경한 파일과 이유, 실행한 검증 명령 및 결과, 수행하지 못한 검증을 간결하게 보고한다. 문서와 코드의 설정이 달라지면 관련 문서도 함께 갱신한다.
+개발 과정의 설명과 결과 보고는 한국어로 작성한다. 변경한 파일과 이유, 실행한 검증 명령 및 결과, 수행하지 못한 검증을 간결하게 보고한다. 문서와 코드의 설정이 달라지면 관련 문서도 함께 갱신한다.

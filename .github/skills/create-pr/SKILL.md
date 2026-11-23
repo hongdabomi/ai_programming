@@ -1,15 +1,21 @@
 ---
 name: create-pr
-description: Opens a GitHub Pull Request for a reviewed, committed branch using the GitHub CLI. Use when the user explicitly asks to create a PR or invokes this skill.
+description: "검토와 커밋이 완료된 브랜치에서 GitHub CLI로 Pull Request를 생성합니다. 사용자가 PR 생성을 명시적으로 요청하거나 이 Skill을 호출했을 때 사용합니다."
 ---
 
-# Create a Pull Request
+# Pull Request 생성
 
-1. Confirm the user explicitly requested PR creation. A request to prepare a PR, review changes, or write a description alone is not approval to publish one.
-2. Inspect the current branch, `git status --short --branch`, relevant commits and diff, configured remote, and `gh auth status`. Do not expose credentials or tokens.
-3. Ensure the working tree is clean and the intended changes are committed. If there are uncommitted changes, review and report them; do not commit them as an implicit part of PR creation.
-4. Check whether a PR already exists for the branch and identify the repository's default base branch. Use `gh` CLI for GitHub operations.
-5. If the branch is not already available on the remote or needs a push/update, stop and ask for explicit permission to push. Do not push implicitly.
-6. Summarize the proposed base, title, and body. If the target or scope is unclear, ask the user before creating the PR.
-7. Once authorized and prerequisites are satisfied, create the PR with `gh pr create`, using a concise summary and a test/validation section that reflects only checks actually run. Do not include secrets or claim unverified results.
-8. Report the PR URL, base and head branches, and any checks not run. Do not merge the PR.
+## 브랜치 및 대상 정책
+
+- `feat/*` 및 `chore/*` 브랜치는 최신 `develop`에서 생성하며, 기본 PR 대상은 `develop`으로 한다.
+- PR 생성 전에 원격을 fetch하고 head 브랜치를 최신 `develop`과 비교한다. 브랜치가 분기됐거나 필요한 기준 커밋이 없으면 중단하고 알린다. 이력을 재작성하거나 force push하지 않는다.
+- `develop` → `main`은 필요한 작업과 검증을 마친 뒤 최종 통합을 위해서만 사용한다.
+
+1. 사용자가 PR 생성을 명시적으로 요청했는지 확인한다. PR 준비, 변경 검토, 설명 작성만 요청한 경우 게시 승인으로 간주하지 않는다.
+2. 현재 브랜치, `git status --short --branch`, 관련 커밋과 diff, 설정된 원격 저장소, `gh auth status`를 확인한다. 자격 증명이나 토큰을 노출하지 않는다.
+3. 작업 트리가 깨끗하고 대상 변경이 커밋됐는지 확인한다. 미커밋 변경이 있으면 검토하고 알리며, PR 생성 과정에서 임의로 커밋하지 않는다.
+4. 해당 브랜치의 기존 PR이 있는지 확인하고 위 브랜치 정책에 따라 base를 선택한다. GitHub 작업에는 `gh` CLI를 사용한다.
+5. 브랜치가 원격에 없거나 원격 갱신이 필요하면 중단하고 push 승인을 요청한다. 묵시적으로 push하지 않는다.
+6. 제안할 base, 제목, 본문을 한국어로 요약한다. 대상이나 범위가 불명확하면 생성 전에 사용자에게 확인한다.
+7. 승인과 선행 조건을 확인한 뒤 `gh pr create`로 PR을 생성한다. 제목과 본문은 한국어로 작성하고, 본문에는 간결한 변경 요약과 실제 실행한 검증만 기록한다. 비밀정보를 포함하거나 확인하지 않은 결과를 주장하지 않는다. 터미널 출력은 그대로 붙여넣지 말고 ANSI 색상 코드 및 불필요한 제어 문자를 제거한다.
+8. PR URL, base와 head 브랜치, 실행하지 않은 검증을 보고한다. PR을 병합하지 않는다.

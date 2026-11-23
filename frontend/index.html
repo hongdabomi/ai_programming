@@ -3,14 +3,321 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>한끼살핌</title>
+    <title>한끼살핌 | 급식 알레르기 확인</title>
+    <link rel="stylesheet" href="style.css?v=3">
   </head>
   <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#" id="brand-home" aria-label="한끼살핌 홈">
+          <img class="brand-logo" src="assets/header-logo.png" alt="" width="192" height="60">
+        </a>
+        <nav class="top-nav" aria-label="주요 메뉴">
+          <button type="button" id="home-nav-button" aria-current="page">홈</button>
+          <button type="button" id="profile-nav-button">알레르기 정보</button>
+          <button type="button" id="meal-nav-button">급식표 분석</button>
+          <button type="button" class="coming-soon" disabled aria-label="AI 도우미, 준비 중">AI 도우미</button>
+        </nav>
+        <button class="header-cta" type="button" id="header-start-button">시작하기 <span aria-hidden="true">→</span></button>
+      </div>
+    </header>
     <main>
-      <h1>한끼살핌</h1>
-      <p>급식표의 알레르기 정보를 꼼꼼히 살피도록 돕는 서비스입니다.</p>
-      <p>초기 개발 환경을 구성했습니다. MVP 기능은 아직 구현되지 않았습니다.</p>
-      <p>음식의 안전성을 보장하는 서비스가 아니며, 실제 원재료와 조리 과정은 교육기관 담당자에게 확인해 주세요.</p>
+      <div class="progress-wrap" id="progress-wrap" hidden>
+        <ol class="progress" aria-label="이용 단계">
+          <li data-step="profile" data-step-number="1">알레르기 등록</li>
+          <li data-step="type" data-step-number="2">급식표 유형</li>
+          <li data-step="review" data-step-number="3">메뉴 확인</li>
+          <li data-step="results" data-step-number="4">비교 결과</li>
+        </ol>
+      </div>
+
+      <section class="screen" id="home-screen" aria-labelledby="home-heading">
+        <div class="hero">
+          <div>
+            <p class="eyebrow">식품 알레르기 확인을 돕는 AI 서비스</p>
+            <h1 id="home-heading">우리 아이의 급식,<br><span>꼼꼼하게 함께 확인해요</span></h1>
+            <p class="hero-copy">
+              한 달 급식표를 한 번 저장하고 날짜별로 확인해<br>
+              아이의 알레르기 정보와 표시 항목을 쉽게 비교해요.
+            </p>
+            <div class="hero-actions">
+              <button class="button-primary" type="button" id="start-button">알레르기 등록하기</button>
+            </div>
+            <p class="hero-footnote">✓ 확인된 정보만 안내　·　✓ 불확실할 땐 추가 확인</p>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <div class="hero-sun"></div>
+            <img class="hero-illustration" src="assets/home-hero.png" alt="" width="531" height="400">
+            <span class="hero-dot"></span>
+          </div>
+        </div>
+        <h2 class="home-flow-heading">복잡한 급식표 확인, 3단계로 간단하게</h2>
+        <div class="home-flow" aria-label="이용 순서">
+          <article class="flow-card">
+            <span class="flow-number">♡</span>
+            <div><strong>01 알레르기 정보 등록</strong><p>자녀의 알레르기 항목을 선택해 저장해요.</p></div>
+          </article>
+          <article class="flow-card">
+            <span class="flow-number">↑</span>
+            <div><strong>02 급식표 업로드</strong><p>날짜·메뉴·알레르기 표시를 확인해 저장해요.</p></div>
+          </article>
+          <article class="flow-card">
+            <span class="flow-number">♧</span>
+            <div><strong>03 주의 메뉴 확인</strong><p>일치 항목과 추가 확인이 필요한 내용을 확인해요.</p></div>
+          </article>
+        </div>
+        <aside class="notice" style="margin-top: 1.2rem">
+          <strong>안내</strong>
+          <p>비교 결과는 입력된 표시를 정리해 보여주는 참고 정보이며, 음식의 안전성을 판정하거나 보장하지 않습니다.</p>
+        </aside>
+      </section>
+
+      <section class="screen" id="profile-screen" aria-labelledby="profile-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 01 · 알레르기 등록</p><h1 id="profile-heading">우리 아이 알레르기 정보를 등록해 주세요</h1><p>선택한 항목은 이후 급식표의 알레르기 표시와 비교할 때 사용해요.</p></div>
+          <span class="badge">데모 프로필 · 테스트 자녀</span>
+        </div>
+        <div class="profile-layout">
+        <section class="card" aria-label="알레르기 프로필">
+          <h2>알레르기 항목 선택</h2>
+          <p class="card-intro">해당하는 식품을 선택하세요. 여러 항목을 선택할 수 있어요.</p>
+          <p class="profile-label">가상 프로필: <strong>테스트 자녀</strong></p>
+          <form id="profile-form">
+            <fieldset id="allergy-fieldset" disabled>
+              <legend>알레르기 항목</legend>
+              <div id="allergy-options" class="allergy-grid"></div>
+            </fieldset>
+            <div class="actions">
+              <button class="button-primary" id="save-button" type="submit" disabled>정보 저장하기</button>
+              <button id="retry-button" class="button-secondary" type="button" hidden>다시 불러오기</button>
+            </div>
+            <p id="selection-summary">알레르기 항목을 불러오는 중입니다.</p>
+            <p id="save-status" role="status" aria-live="polite">저장된 정보를 확인하고 있습니다.</p>
+          </form>
+        </section>
+        <aside class="profile-guide">
+          <span class="guide-icon" aria-hidden="true">♡</span>
+          <h2>등록 가이드</h2>
+          <p><strong>우리 아이가 주의해야 하는 식품을 선택해 주세요.</strong></p>
+          <p>등록 정보는 추후 언제든지 수정할 수 있어요.</p>
+        </aside>
+        </div>
+        <div class="screen-actions">
+          <button class="button-secondary" type="button" id="profile-home-button">홈으로</button>
+          <button class="button-primary" type="button" id="profile-next-button" disabled>급식표 유형 고르기 <span aria-hidden="true">→</span></button>
+        </div>
+      </section>
+
+      <section class="screen" id="meal-type-screen" aria-labelledby="meal-type-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 02 · 급식표 분석</p><h1 id="meal-type-heading">급식표를 올리고 메뉴를 확인해요</h1><p>이미지 인식 결과는 수정할 수 있으며, 불명확한 정보는 보호자가 직접 확인할 수 있어요.</p></div>
+          <button class="button-secondary" type="button" id="type-back-button">← 알레르기 정보</button>
+        </div>
+        <div class="type-choice-card">
+          <h2>올리시는 급식표의 유형은?</h2>
+          <button class="type-choice" type="button" id="choose-daily-button"><span class="type-choice-dot" aria-hidden="true"></span><span>하루 급식표입니다.<small>하루치 이미지를 올려 메뉴를 확인해요.</small></span><span aria-hidden="true">→</span></button>
+          <button class="type-choice" type="button" id="choose-monthly-button"><span class="type-choice-dot" aria-hidden="true"></span><span>한 달 급식표입니다. (여러 날짜)<small>이미지를 올린 뒤 확인할 날짜를 선택해요.</small></span><span aria-hidden="true">→</span></button>
+          <button class="type-choice" type="button" id="choose-saved-button"><span class="type-choice-dot" aria-hidden="true"></span><span>이전에 올린 급식표입니다.<small id="saved-sheet-availability">저장 상태 확인 중</small></span><span aria-hidden="true">→</span></button>
+        </div>
+        <aside class="notice" style="margin-top: 1.2rem">
+          <strong>AI 추출은 후보 정보예요</strong>
+          <p>날짜, 메뉴명, 알레르기 표시를 직접 검토하고 저장하기 전에는 비교나 기존 데이터에 반영되지 않습니다.</p>
+        </aside>
+      </section>
+
+      <section class="screen" id="daily-upload-screen" aria-labelledby="daily-upload-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 02 · 급식표 분석</p><h1 id="daily-upload-heading">하루 급식표를 올리고 메뉴를 확인해요</h1><p>이미지를 올리면 날짜, 식사 구분, 메뉴와 알레르기 표시를 읽어요.</p></div>
+          <button class="button-secondary" type="button" id="daily-upload-back-button">← 유형 다시 선택</button>
+        </div>
+        <div class="upload-layout"><section class="card upload-stage-card">
+          <label class="form-field" for="daily-upload-date-input">확인할 급식 날짜
+            <input id="daily-upload-date-input" type="date">
+          </label>
+          <form id="daily-image-form" class="image-upload-form">
+            <fieldset id="daily-image-fieldset" disabled>
+              <legend>하루 급식표 이미지 업로드</legend>
+              <label class="upload-dropzone" for="daily-image-input"><span class="upload-arrow" aria-hidden="true">↑</span><strong>급식표 이미지를 업로드해 주세요</strong><span>JPG, PNG 등 이미지 파일을 선택해 주세요</span><span class="upload-pick">이미지 선택</span>
+                <input id="daily-image-input" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
+              </label>
+              <p class="help-text">선택 날짜와 이미지 날짜를 비교합니다. 인식 결과는 검토 전까지 저장되지 않습니다. 최대 10MB.</p>
+            </fieldset>
+            <button class="button-primary" id="extract-daily-button" type="submit" disabled>이미지 인식 결과 보기</button>
+            <p id="daily-extraction-status" role="status" aria-live="polite">이미지를 선택해 주세요.</p>
+            <div id="daily-extraction-progress" class="extraction-progress" role="status" aria-live="polite" hidden>
+              <span class="extraction-spinner" aria-hidden="true"></span><strong>급식표를 분석하고 있어요</strong>
+              <p>AI가 날짜, 메뉴와 알레르기 표시를 확인하고 있어요.</p>
+            </div>
+          </form>
+          <section id="daily-extraction-results" class="extraction-results" aria-live="polite" hidden></section>
+          <button class="button-secondary" type="button" id="daily-manual-button">이미지 인식 대신 직접 입력</button>
+        </section>
+        <aside class="card upload-process"><h2>등록 후 진행 과정</h2><p>한 번만 확인하면 저장된 날짜는 계속 조회할 수 있어요.</p><ol><li><span>01</span><div><strong>AI가 날짜와 메뉴 읽기</strong><small>날짜 · 오전 간식 · 점심 · 오후 간식</small></div></li><li><span>02</span><div><strong>인식한 날짜 확인</strong><small>연도 누락·날짜 오인식은 직접 수정</small></div></li><li><span>03</span><div><strong>알레르기 번호 검토</strong><small>①~⑲ 표시와 변환한 항목 확인</small></div></li><li><span>04</span><div><strong>검토 완료 후 날짜별 저장</strong><small>선택한 날짜만 비교에 사용</small></div></li></ol></aside></div>
+      </section>
+
+      <section class="screen" id="monthly-screen" aria-labelledby="monthly-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 02 · 급식표 분석</p><h1 id="monthly-heading">한 달 급식표를 올리고 메뉴를 확인해요</h1><p>이미지를 선택한 뒤 분석할 날짜를 고릅니다.</p></div>
+          <button class="button-secondary" type="button" id="monthly-back-button">← 유형 다시 선택</button>
+        </div>
+        <div class="upload-layout"><section class="card upload-stage-card">
+          <form id="monthly-image-form" class="image-upload-form">
+            <fieldset id="monthly-image-fieldset" disabled>
+              <legend>한 달 급식표 이미지 추출</legend>
+              <label class="upload-dropzone" for="monthly-image-input"><span class="upload-arrow" aria-hidden="true">↑</span><strong>급식표 이미지를 업로드해 주세요</strong><span>JPG, PNG 등 이미지 파일을 선택해 주세요</span><span class="upload-pick">이미지 선택</span>
+                <input
+                  id="monthly-image-input"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                >
+              </label>
+              <p class="help-text">최대 10MB. 추출 결과는 날짜별 후보이며 저장된 급식표를 자동으로 변경하지 않습니다.</p>
+            </fieldset>
+            <div class="actions">
+              <button class="button-primary" id="extract-monthly-button" type="submit" disabled>날짜 선택으로 이동</button>
+            </div>
+            <p id="monthly-upload-file-status" role="status" aria-live="polite">이미지를 선택해 주세요.</p>
+          </form>
+        </section>
+        <aside class="card upload-process"><h2>등록 후 진행 과정</h2><p>한 번만 확인하면 저장된 날짜는 계속 조회할 수 있어요.</p><ol><li><span>01</span><div><strong>AI가 날짜와 메뉴 읽기</strong><small>날짜 · 오전 간식 · 점심 · 오후 간식</small></div></li><li><span>02</span><div><strong>인식한 날짜 확인</strong><small>연도 누락·날짜 오인식은 직접 수정</small></div></li><li><span>03</span><div><strong>알레르기 번호 검토</strong><small>①~⑲ 표시와 변환한 항목 확인</small></div></li><li><span>04</span><div><strong>검토 완료 후 날짜별 저장</strong><small>선택한 날짜만 비교에 사용</small></div></li></ol></aside></div>
+      </section>
+
+      <section class="screen" id="monthly-date-screen" aria-labelledby="monthly-date-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 02 · DATE</p><h1 id="monthly-date-heading">날짜와 메뉴를 확인한 뒤 저장해요</h1><p>분석을 원하는 날짜를 선택해 주세요.</p></div>
+          <button class="button-secondary" type="button" id="monthly-date-back-button">← 급식표 업로드</button>
+        </div>
+        <section class="card date-stage-card">
+          <label class="form-field" for="meal-month-input">조회할 월
+            <input id="meal-month-input" type="month" aria-describedby="monthly-help">
+          </label>
+          <label class="form-field" for="monthly-target-date-input">분석할 날짜
+            <input id="monthly-target-date-input" type="date" aria-describedby="monthly-help">
+          </label>
+          <p id="monthly-help" class="help-text">선택 날짜에 연결된 메뉴만 인식 결과로 보여 줍니다. 저장된 날짜는 달력에서 다시 열 수 있습니다.</p>
+          <button class="button-primary" id="view-monthly-results-button" type="button">급식표 인식 결과 보기</button>
+          <p id="monthly-extraction-status" role="status" aria-live="polite"></p>
+          <div id="monthly-extraction-progress" class="extraction-progress" role="status" aria-live="polite" hidden>
+            <span class="extraction-spinner" aria-hidden="true"></span><strong>급식표를 분석하고 있어요</strong>
+            <p>AI가 날짜, 메뉴와 알레르기 표시를 확인하고 있어요.</p>
+          </div>
+          <section id="monthly-extraction-results" class="extraction-results" aria-live="polite" hidden></section>
+          <div id="month-calendar" class="month-calendar" aria-label="월별 급식표 상태"></div>
+          <p id="month-status" role="status" aria-live="polite"></p>
+        </section>
+      </section>
+
+      <section class="screen" id="meal-review-screen" aria-labelledby="meal-review-title" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 03 · REVIEW</p><h1 id="meal-review-title">하루치 급식 메뉴를 확인해요</h1><p id="meal-review-description">하루의 모든 메뉴를 한 목록으로 확인하고, 알레르기 표시를 검토해 주세요.</p></div>
+          <button class="button-secondary" type="button" id="review-back-button">← 급식표 유형</button>
+        </div>
+        <section class="card review-card" aria-labelledby="comparison-heading">
+          <h2 id="comparison-heading">급식표 인식 결과</h2>
+          <p class="card-intro">하루 메뉴는 선택한 날짜에 저장됩니다. 표시를 읽지 못한 메뉴는 원본에서 확인한 뒤 메뉴 카드의 ‘표시 없음 확인’을 눌러 주세요.</p>
+          <label class="form-field" for="meal-date-input">급식 날짜
+            <input id="meal-date-input" type="date">
+          </label>
+          <div class="date-status">
+            <span id="selected-date-badge" class="badge">정보 없음</span>
+            <p id="selected-date-status" role="status" aria-live="polite"></p>
+          </div>
+          <details class="review-editor" id="review-editor"><summary>메뉴 직접 추가·수정하기</summary><form id="menu-form">
+            <fieldset id="menu-entry-fieldset" disabled>
+              <legend>하루치 메뉴 직접 입력</legend>
+              <div class="meal-entry-grid">
+                <label class="form-field" for="menu-name">
+                  메뉴명
+                  <input id="menu-name" type="text" maxlength="160" placeholder="예: 현미밥, 된장국" required>
+                </label>
+                <label class="form-field" for="menu-meal-type">
+                  식사 구분 (선택)
+                  <select id="menu-meal-type">
+                    <option value="">미분류</option>
+                    <option value="morning_snack">오전 간식</option>
+                    <option value="lunch">점심</option>
+                    <option value="afternoon_snack">오후 간식</option>
+                  </select>
+                </label>
+                <label class="form-field" for="menu-allergens">
+                  급식표의 알레르기 표시
+                  <input
+                    id="menu-allergens"
+                    type="text"
+                    placeholder="예: 우유, 대두"
+                    aria-describedby="menu-allergens-help"
+                  >
+                </label>
+              </div>
+              <p id="menu-allergens-help" class="help-text">
+                표시된 항목명을 쉼표로 구분해 입력해 주세요. 알레르기 번호와 항목명은 아래 메뉴 목록에서 함께 확인할 수 있어요.
+              </p>
+              <label class="allergy-option">
+                <input id="menu-information-complete" type="checkbox">
+                급식표의 알레르기 표시를 모두 확인했습니다.
+              </label>
+            </fieldset>
+            <div class="actions">
+              <button class="button-primary" id="add-menu-button" type="submit" disabled>메뉴 추가</button>
+              <button id="cancel-menu-edit-button" class="button-secondary" type="button" hidden>수정 취소</button>
+            </div>
+          </form></details>
+
+          <details class="number-reference">
+            <summary>급식표 알레르기 번호표 확인</summary>
+            <ol id="allergy-number-reference"></ol>
+          </details>
+          <ul id="menu-list" class="menu-list" aria-label="하루치 비교할 메뉴 목록"></ul>
+          <div class="actions review-actions">
+            <button class="button-secondary" id="save-meal-sheet-button" type="button" disabled>변경 저장</button>
+            <button class="button-primary" id="confirm-meal-sheet-button" type="button" disabled>검토 완료하고 알레르기 비교하기</button>
+            <button class="button-primary" id="analyze-date-button" type="button" disabled>선택한 날짜 비교</button>
+            <button class="button-secondary" id="no-meal-button" type="button" disabled>급식 없음으로 저장</button>
+          </div>
+          <p class="help-text">검토 완료로 저장된 날짜의 모든 메뉴만 비교합니다. 식사 구분은 선택 사항이며, 안전을 판정하거나 보장하지 않습니다.</p>
+          <p id="analysis-status" role="status" aria-live="polite">알레르기 정보를 불러오는 중입니다.</p>
+          <section id="unassigned-legacy-card" class="notice unassigned-card" hidden>
+            <strong>날짜가 없는 기존 급식표를 보존했어요</strong>
+            <p id="legacy-meal-sheet-summary"></p>
+            <div class="actions">
+              <button class="button-secondary" id="copy-legacy-button" type="button">선택한 날짜의 초안으로 복사</button>
+              <button class="button-primary" id="analyze-legacy-button" type="button">날짜 미지정 급식표 기존 비교</button>
+            </div>
+            <p class="help-text">복사만으로 저장되지는 않아요. 메뉴를 확인한 뒤 저장해야 선택한 날짜에 반영됩니다. 기존 비교는 날짜를 사용하지 않는 F03 경로이며 날짜별 비교가 아닙니다.</p>
+          </section>
+        </section>
+      </section>
+
+      <section class="screen" id="results-screen" aria-labelledby="results-heading" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">STEP 04 · RESULT</p><h1 id="results-heading">알레르기 비교 결과</h1><p id="results-description">입력한 하루치 급식표 표시를 기준으로 정리한 결과예요.</p></div>
+          <button class="button-secondary" type="button" id="result-edit-button">← 메뉴 다시 확인</button>
+        </div>
+        <div class="results-layout">
+          <section class="card">
+            <div id="analysis-results" aria-live="polite"></div>
+            <div class="screen-actions">
+              <button class="button-secondary" type="button" id="result-profile-button">알레르기 정보 확인</button>
+              <button class="button-primary" type="button" id="result-edit-button-bottom">급식표 화면으로 돌아가기</button>
+            </div>
+          </section>
+          <aside id="contact-request-panel" class="contact-request-panel" hidden>
+            <h2>교사에게 확인 요청하기</h2>
+            <p>불명확한 식재료와 조리 과정을 담당자에게 직접 확인해 주세요.</p>
+            <textarea id="contact-request-text" readonly aria-label="문의 문구"></textarea>
+            <button class="button-primary" id="copy-contact-request-button" type="button">문의 문장 복사</button>
+            <p id="copy-contact-request-status" role="status" aria-live="polite"></p>
+          </aside>
+        </div>
+      </section>
+
+      <aside class="notice" style="margin: 0 0 2rem">
+        <strong>꼭 확인해 주세요</strong>
+        <p>이 서비스는 입력된 정보를 정리해 보여줄 뿐, 음식의 안전성을 판정하거나 보장하지 않습니다. 실제 원재료와 조리 과정은 교육기관 담당자에게 확인해 주세요.</p>
+      </aside>
     </main>
+    <footer class="site-footer">한끼살핌 · 가상 데이터 데모 · 실제 아동 개인정보를 입력하지 마세요.</footer>
+
+    <script src="script.js"></script>
   </body>
 </html>

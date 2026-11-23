@@ -17,3 +17,14 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local-only development plan
+DEVELOPMENT_PLAN.md
+
+# Local demo profile data
+/backend/data/profile.json
+/backend/data/.profile-*.tmp
+/backend/data/meal_sheet.json
+/backend/data/.meal-sheet-*.tmp
+/backend/data/meal_sheets.json
+/backend/data/.meal-sheets-*.tmp
